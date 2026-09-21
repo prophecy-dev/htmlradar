@@ -16,7 +16,7 @@
 // generated file is committed too, so typecheck and tests work without a build;
 // tests/tracker-bundle.test.ts fails when it has drifted from a fresh build.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const TRACKER_FILE = new URL('../../tracker/dist/tracker.js', import.meta.url);
@@ -41,6 +41,10 @@ export const bundleModule = (source) =>
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const source = servedSource(readFileSync(TRACKER_FILE, 'utf8'));
-  writeFileSync(BUNDLE_FILE, bundleModule(source));
+  const next = bundleModule(source);
+  // Unchanged bytes are not rewritten, so a file watcher sees no change.
+  if (!existsSync(BUNDLE_FILE) || readFileSync(BUNDLE_FILE, 'utf8') !== next) {
+    writeFileSync(BUNDLE_FILE, next);
+  }
   console.log(`tracker ${trackerVersion(source)} (${source.length} bytes)`);
 }

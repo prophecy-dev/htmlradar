@@ -12,9 +12,12 @@
 
   // Rebuilds the tracker and regenerates src/tracker-bundle.ts before every
   // bundle, so the /v1/tracker.{version}.js this worker serves is always the
-  // bytes it hashes. Runs under `wrangler dev` too.
+  // bytes it hashes. Runs under `wrangler dev` too, on tracker changes only:
+  // the default watch_dir is ./src, where the generated file lands, which
+  // restarts the build forever.
   "build": {
     "command": "pnpm --filter @htmlradar/tracker build && node scripts/tracker-bundle.mjs",
+    "watch_dir": "../tracker/src",
   },
 
   "d1_databases": [
