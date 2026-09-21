@@ -83,7 +83,12 @@ describe('resolveAccessEmail', () => {
     });
   });
 
-  it('refuses everyone without SESSION_SECRET, unless ACCESS_INSECURE_DEV=1', async () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses everyone without SESSION_SECRET, unless ACCESS_INSECURE_DEV=1 in next dev', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
     expect(
       await resolveAccessEmail(undefined, env({ DEV_USER_EMAIL: 'dev@somnia.foundation' })),
     ).toEqual({
@@ -98,7 +103,18 @@ describe('resolveAccessEmail', () => {
     ).toEqual({ ok: true, email: 'dev@somnia.foundation' });
   });
 
+  it('ignores the dev fallback outside next dev', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(
+      await resolveAccessEmail(
+        undefined,
+        env({ ACCESS_INSECURE_DEV: '1', DEV_USER_EMAIL: 'dev@somnia.foundation' }),
+      ),
+    ).toEqual({ ok: false, reason: 'unauthenticated' });
+  });
+
   it('ignores the dev fallback once SESSION_SECRET is set', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
     expect(
       await resolveAccessEmail(
         undefined,

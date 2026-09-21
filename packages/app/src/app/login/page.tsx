@@ -8,9 +8,12 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; signout?: string }>;
 }) {
-  const { next } = await searchParams;
+  const { next: rawNext, signout } = await searchParams;
+  // Never land back on /login (it would sign in again, forever) or on an API route.
+  const target = safeNext(rawNext);
+  const next = /^\/(login|api)(\/|\?|$)/.test(target) ? '/docs' : target;
   const appId = envVar('PRIVY_APP_ID');
   const domains = allowedDomains(envVar)
     .split(',')
@@ -24,7 +27,7 @@ export default async function LoginPage({
         {domains.map((d) => `@${d}`).join(' or ')} e-mail; we send you a one-time code.
       </p>
       {appId ? (
-        <LoginClient appId={appId} next={safeNext(next)} />
+        <LoginClient appId={appId} next={next} signout={signout === '1'} />
       ) : (
         <p className="mt-8 text-[14px] text-ink-soft">
           Sign-in is not configured (PRIVY_APP_ID is not set).

@@ -11,7 +11,8 @@
 //   3. Every request after that only verifies the cookie (resolveAccessEmail).
 //
 // Fails closed: without SESSION_SECRET nobody gets a session. ACCESS_INSECURE_DEV=1
-// trusts DEV_USER_EMAIL instead, for `next dev` only. The domain allow-list
+// trusts DEV_USER_EMAIL instead, and only in `next dev` (NODE_ENV=development,
+// which a production build inlines as 'production'). The domain allow-list
 // defaults to somnia.foundation, so a deploy that forgets ALLOWED_EMAIL_DOMAINS
 // is not open to every Privy user. It is checked when the cookie is minted and
 // again on every request.
@@ -90,6 +91,13 @@ export async function verifyPrivyIdentityToken(
   }
 }
 
+// SESSION_SECRET also signs the proxy's recipient cookies, so the message uses
+// the proxy's collision-proof form: a JSON array led by a purpose no proxy
+// message uses (packages/proxy/src/auth.ts, "ONE SIGNING HELPER").
+function sessionMessage(e: string, exp: number): string {
+  return JSON.stringify(['dashboard-session', e, String(exp)]);
+}
+
 export async function signSession(
   email: string,
   secret: string,
@@ -97,7 +105,7 @@ export async function signSession(
 ): Promise<string> {
   const exp = Math.floor(now / 1000) + SESSION_TTL_SECONDS;
   const e = base64url(new TextEncoder().encode(email));
-  return `${e}.${exp}.${await hmac(`dashboard-session:${e}:${exp}`, secret)}`;
+  return `${e}.${exp}.${await hmac(sessionMessage(e, exp), secret)}`;
 }
 
 export async function verifySession(
@@ -109,7 +117,7 @@ export async function verifySession(
   if (!e || !expRaw || !mac) return null;
   const exp = Number(expRaw);
   if (!Number.isInteger(exp) || exp * 1000 <= now) return null;
-  const expected = await hmac(`dashboard-session:${e}:${exp}`, secret);
+  const expected = await hmac(sessionMessage(e, exp), secret);
   if (!timingSafeEqual(mac, expected)) return null;
   try {
     return new TextDecoder().decode(fromBase64url(e));
@@ -126,7 +134,11 @@ export async function resolveAccessEmail(
   const secret = env('SESSION_SECRET');
   if (sessionCookie && secret) {
     email = await verifySession(sessionCookie, secret);
-  } else if (!secret && env('ACCESS_INSECURE_DEV') === '1') {
+  } else if (
+    !secret &&
+    env('ACCESS_INSECURE_DEV') === '1' &&
+    process.env.NODE_ENV === 'development'
+  ) {
     email = env('DEV_USER_EMAIL') ?? null;
   }
   if (!email) return { ok: false, reason: 'unauthenticated' };

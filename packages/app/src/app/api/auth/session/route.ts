@@ -12,7 +12,21 @@ import {
 } from '@/lib/access';
 import { envVar } from '@/lib/cf';
 
+// A cross-site form can post a JSON-looking text/plain body (login CSRF), so
+// only same-origin JSON requests may start a session.
+function sameOriginJson(req: NextRequest): boolean {
+  if (!(req.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json'))
+    return false;
+  const site = req.headers.get('sec-fetch-site');
+  if (site && site !== 'same-origin') return false;
+  const origin = req.headers.get('origin');
+  return !origin || origin === req.nextUrl.origin;
+}
+
 export async function POST(req: NextRequest) {
+  if (!sameOriginJson(req)) {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
   const appId = envVar('PRIVY_APP_ID');
   const secret = envVar('SESSION_SECRET');
   if (!appId || !secret) {

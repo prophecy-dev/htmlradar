@@ -10,6 +10,6 @@ const PrivyLogin = dynamic(() => import('./PrivyLogin'), {
   loading: () => <div className="mt-8 h-10" />,
 });
 
-export function LoginClient(props: { appId: string; next: string }) {
+export function LoginClient(props: { appId: string; next: string; signout: boolean }) {
   return <PrivyLogin {...props} />;
 }
