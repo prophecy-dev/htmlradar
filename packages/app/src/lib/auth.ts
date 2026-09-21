@@ -8,7 +8,7 @@ import { db, envVar } from './cf';
 
 /** The signed-in (Cloudflare Access) user's profile, created on first visit, or null. */
 export async function getCurrentUser(): Promise<Profile | null> {
-  const result = await resolveAccessEmail(headers(), envVar);
+  const result = await resolveAccessEmail(await headers(), envVar);
   if (!result.ok) return null;
   return ensureProfile(db(), result.email);
 }

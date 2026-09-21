@@ -16,9 +16,8 @@ import { findOwnedShare } from '@/lib/api-share-lookup';
 import { db } from '@/lib/cf';
 import { shareUrl } from '@/lib/share-url';
 
-export const runtime = 'edge';
-
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await authenticateApiKey(req, { name: 'revoke', max: CHEAP_MAX, write: true });
   if ('error' in auth) return auth.error;
   const { caller } = auth;

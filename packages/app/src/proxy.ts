@@ -1,4 +1,4 @@
-// Every page is internal and sits behind Cloudflare Access. The middleware
+// Every page is internal and sits behind Cloudflare Access. The proxy
 // checks the Access identity (lib/access.ts) and answers 403 for anyone who
 // is not allowed. /api/v1/* is exempt: it authenticates API keys itself, and
 // the Access application must have a Bypass policy for that path.
@@ -8,7 +8,7 @@ import { resolveAccessEmail } from '@/lib/access';
 
 const env = (name: string) => process.env[name] || undefined;
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith('/api/v1/') || pathname === '/forbidden') {
     return NextResponse.next();

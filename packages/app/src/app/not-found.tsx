@@ -8,8 +8,6 @@ import { HeroRadar } from '@/components/HeroRadar';
 import { SectionMark } from '@/components/SectionMark';
 import { ArrowLeft } from 'lucide-react';
 
-export const runtime = 'edge';
-
 export const metadata = {
   title: 'Not found',
 };

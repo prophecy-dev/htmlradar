@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setupDevPlatform } from '@cloudflare/next-on-pages/next-dev';
+import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 
 // Load the workspace-root .env.local so the monorepo has a single source
 // of truth for secrets. Next.js by default only looks in the package
@@ -21,9 +21,9 @@ if (fs.existsSync(rootEnvPath)) {
 // `next dev` gets the D1 and R2 bindings from wrangler.jsonc (local
 // simulations under packages/app/.wrangler/state, the same store
 // `wrangler d1 migrations apply htmlradar --local` writes), so
-// getRequestContext().env works the same in development as on Pages.
+// getCloudflareContext().env works the same in development as on the Worker.
 if (process.env.NODE_ENV === 'development') {
-  await setupDevPlatform();
+  initOpenNextCloudflareForDev();
 }
 
 /** @type {import('next').NextConfig} */

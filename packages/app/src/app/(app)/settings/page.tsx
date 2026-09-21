@@ -15,8 +15,6 @@ import { SectionMark } from '@/components/SectionMark';
 import { apiKeyPrefix, generateApiKey, hashApiKey } from '@/lib/api-auth';
 import { ApiKeys, type ApiKeyRow } from './ApiKeys';
 
-export const runtime = 'edge';
-
 // A key is generated, hashed, and the hash is what is written. The plaintext
 // exists only in this function's return value and in the browser tab that
 // asked for it — there is deliberately no way to read it back afterwards.
@@ -80,11 +78,10 @@ async function saveProfileAction(formData: FormData) {
   redirect(error ? `/settings?error=${encodeURIComponent(error)}` : '/settings?saved=1');
 }
 
-export default async function SettingsPage({
-  searchParams,
-}: {
-  searchParams?: { saved?: string; error?: string };
+export default async function SettingsPage(props: {
+  searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  const searchParams = await props.searchParams;
   const user = await requireUser();
   const d = db();
   const [profile, keys] = await Promise.all([getProfile(d, user.id), listApiKeys(d, user.id)]);

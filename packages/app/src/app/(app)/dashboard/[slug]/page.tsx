@@ -25,15 +25,11 @@ import { CopySlugButton } from '@/components/CopySlugButton';
 import { isMetaSectionTitle } from '@/lib/section-filter';
 import { shareUrlLabel } from '@/lib/share-url';
 
-export const runtime = 'edge';
-
-export default async function ShareAnalyticsPage({
-  params,
-  searchParams,
-}: {
-  params: { slug: string };
-  searchParams?: { just_created?: string };
+export default async function ShareAnalyticsPage(props: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ just_created?: string }>;
 }) {
+  const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
   const user = await requireUser();
   const d = db();
 

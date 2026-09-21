@@ -1,20 +1,27 @@
-// Cloudflare Pages config for the dashboard (Next.js via next-on-pages).
+// Cloudflare Worker config for the dashboard (Next.js via @opennextjs/cloudflare).
+// Build and deploy from WSL/Linux/CI: `pnpm --filter @htmlradar/app deploy`.
 //
 // The whole app sits behind Cloudflare Access; /api/v1/* needs an Access
 // Bypass policy so API keys (and packages/mcp) can reach it. See README.
 //
-// Secrets and plain vars (set in the Pages project, or .dev.vars locally):
+// Secrets and plain vars (`wrangler secret put`, or .dev.vars locally):
 //   ACCESS_TEAM_DOMAIN     e.g. somnia.cloudflareaccess.com
 //   ACCESS_AUD             the Access application's AUD tag
 //   ALLOWED_EMAIL_DOMAINS  e.g. somnia.network,hive.land (empty = any Access user)
 //   SESSION_SECRET         shared with the proxy: signs owner preview tokens
+//   ACCESS_INSECURE_DEV,
 //   DEV_USER_EMAIL         local development only, never in production
 {
-  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "htmlradar-app",
-  "compatibility_date": "2026-05-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "pages_build_output_dir": ".vercel/output/static",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
   "d1_databases": [
     {
       "binding": "DB",

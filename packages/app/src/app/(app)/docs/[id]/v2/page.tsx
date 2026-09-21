@@ -49,26 +49,28 @@ import { LinkPreviewForm } from '../LinkPreviewForm';
 import type { Viewer, Session, SectionEvent } from '@/lib/types';
 import { isMetaSectionTitle } from '@/lib/section-filter';
 import { countDistinctViewers } from '@/lib/viewer-metrics';
-export const runtime = 'edge';
+
+type DocSearchParams = {
+  tab?: string;
+  share_error?: string;
+  delete_error?: string;
+  attachment_error?: string;
+  preview_error?: string;
+  replace_error?: string;
+  replaced?: string;
+  hide_error?: string;
+  edited?: string;
+  share_deleted?: string;
+  share_kept?: string;
+  preview_saved?: string;
+};
 
 export default async function DocumentPageV2(props: {
-  params: { id: string };
-  searchParams?: {
-    tab?: string;
-    share_error?: string;
-    delete_error?: string;
-    attachment_error?: string;
-    preview_error?: string;
-    replace_error?: string;
-    replaced?: string;
-    hide_error?: string;
-    edited?: string;
-    share_deleted?: string;
-    share_kept?: string;
-    preview_saved?: string;
-  };
+  params: Promise<{ id: string }>;
+  searchParams: Promise<DocSearchParams>;
 }) {
-  return renderV2(props);
+  const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
+  return renderV2({ params, searchParams });
 }
 
 async function renderV2({
@@ -76,20 +78,7 @@ async function renderV2({
   searchParams,
 }: {
   params: { id: string };
-  searchParams?: {
-    tab?: string;
-    share_error?: string;
-    delete_error?: string;
-    attachment_error?: string;
-    preview_error?: string;
-    replace_error?: string;
-    replaced?: string;
-    hide_error?: string;
-    edited?: string;
-    share_deleted?: string;
-    share_kept?: string;
-    preview_saved?: string;
-  };
+  searchParams?: DocSearchParams;
 }) {
   const user = await requireUser();
   const d = db();
@@ -457,7 +446,7 @@ const CUSTOM_SLUG_KEPT_MESSAGE =
 
 type BannerRow = { key: string; role: 'alert' | 'status'; message: string };
 
-function collectBanners(sp: NonNullable<Parameters<typeof DocumentPageV2>[0]['searchParams']>) {
+function collectBanners(sp: DocSearchParams) {
   const out: BannerRow[] = [];
   if (!sp) return out;
   if (sp.share_kept)
