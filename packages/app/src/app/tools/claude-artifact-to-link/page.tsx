@@ -148,9 +148,13 @@ export default async function ClaudeArtifactToLinkToolPage({
               <Link href="/tools/html-to-link" className="text-signal-dark hover:underline">
                 HTML file to link
               </Link>
-              , and{' '}
+              ,{' '}
               <Link href="/for/claude-artifacts" className="text-signal-dark hover:underline">
                 tracking Claude artifacts
+              </Link>
+              , and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
               </Link>
               .
             </p>

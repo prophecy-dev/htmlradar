@@ -1,6 +1,8 @@
-// /tools index. The four free tools, one line each. Exists so "Tools" in
-// the header and footer has a single target instead of pointing at one of
-// the three tools and hoping the visitor finds the other two.
+// /tools index. The four free tools, one line each, plus the rest of the
+// "AI-made HTML to a tracked link" cluster. Exists so "Tools" in the header
+// and footer has a single target instead of pointing at one of the three
+// tools and hoping the visitor finds the other two, and so every page in
+// that cluster has one hub to link back to.
 
 import Link from 'next/link';
 import { NavBar } from '@/components/NavBar';
@@ -17,6 +19,32 @@ export const metadata = pageMeta({
     'Free tools from HTMLRadar: turn an HTML file into a shareable link, share a Claude artifact as a link, save a Claude artifact as a PDF, or turn a PDF deck into a web page.',
   path: '/tools',
 });
+
+// The rest of the "AI-made HTML to a tracked link" cluster. Kept separate
+// from TOOLS because these are guides and references, not browser tools.
+const GUIDES = [
+  {
+    href: '/for/claude-artifacts',
+    title: 'Track a Claude artifact',
+    description:
+      'What happens after you send an artifact, and how a tracked link answers whether it was read.',
+  },
+  {
+    href: '/for/claude-code',
+    title: 'HTMLRadar for Claude Code',
+    description: 'Share the HTML that Claude Code writes, straight from the terminal session.',
+  },
+  {
+    href: '/mcp',
+    title: 'The HTMLRadar MCP server',
+    description: 'Connect Claude to HTMLRadar so it can create and check tracked links for you.',
+  },
+  {
+    href: '/blog/share-html-from-claude-code',
+    title: 'Share a page from Claude Code, then ask who read it',
+    description: 'A walkthrough, from the file Claude wrote to the reading report.',
+  },
+];
 
 const TOOLS = [
   {
@@ -77,6 +105,26 @@ export default function ToolsIndexPage() {
               </li>
             ))}
           </ul>
+
+          <section className="mt-20 border-t border-line pt-10">
+            <h2 className="font-serif text-[28px] leading-snug text-ink md:text-[32px]">
+              Turning AI-made HTML into a tracked link
+            </h2>
+            <ul className="mt-8 divide-y divide-line">
+              {GUIDES.map((g) => (
+                <li key={g.href} className="py-6 first:pt-0">
+                  <Link href={g.href} className="group block">
+                    <h3 className="font-serif text-[21px] leading-snug text-ink transition group-hover:text-signal-dark md:text-[23px]">
+                      {g.title}
+                    </h3>
+                    <p className="mt-2 text-[15px] leading-relaxed text-ink-soft">
+                      {g.description}
+                    </p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         </article>
       </main>
       <V2Footer />

@@ -901,11 +901,15 @@ did anyone read the proposal I shared yesterday?`}
               >
                 Tutorial: share a page from Claude Code, then ask who read it
               </Link>
-              , and the{' '}
+              , the{' '}
               <Link href="/docs/api" className="text-signal-dark hover:underline">
                 HTTP API reference
               </Link>{' '}
-              this server calls on your behalf.
+              this server calls on your behalf, and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
+              </Link>
+              .
             </p>
           </div>
         </article>

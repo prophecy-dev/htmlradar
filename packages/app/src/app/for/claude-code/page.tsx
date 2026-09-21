@@ -336,9 +336,20 @@ export default function ForClaudeCodePage() {
               <Link href="/use-case/proposal-tracking" className="text-signal-dark hover:underline">
                 proposal tracking
               </Link>
-              , and{' '}
+              ,{' '}
               <Link href="/self-hosted" className="text-signal-dark hover:underline">
                 self-hosted document tracking
+              </Link>
+              ,{' '}
+              <Link
+                href="/blog/share-html-from-claude-code"
+                className="text-signal-dark hover:underline"
+              >
+                share a page from Claude Code, then ask who read it
+              </Link>
+              , and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
               </Link>
               .
             </p>

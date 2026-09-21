@@ -156,9 +156,13 @@ export default async function HtmlToLinkToolPage({ searchParams }: { searchParam
               >
                 Claude artifact to PDF
               </Link>
-              , and{' '}
+              ,{' '}
               <Link href="/use-case/track-html-deck" className="text-signal-dark hover:underline">
                 track an HTML deck
+              </Link>
+              , and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
               </Link>
               .
             </p>

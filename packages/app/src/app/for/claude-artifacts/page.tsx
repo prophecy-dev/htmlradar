@@ -224,9 +224,20 @@ export default function ClaudeArtifactsPage() {
               <Link href="/for/reveal-js" className="text-signal-dark hover:underline">
                 reveal.js deck analytics
               </Link>
-              , and{' '}
+              ,{' '}
               <Link href="/use-case/proposal-tracking" className="text-signal-dark hover:underline">
                 proposal tracking
+              </Link>
+              ,{' '}
+              <Link
+                href="/tools/claude-artifact-to-link"
+                className="text-signal-dark hover:underline"
+              >
+                turn a Claude artifact into a link
+              </Link>
+              , and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
               </Link>
               .
             </p>

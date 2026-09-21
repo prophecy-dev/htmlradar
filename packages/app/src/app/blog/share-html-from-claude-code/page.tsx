@@ -644,9 +644,13 @@ export default function Post() {
               <Link href="/for/claude-code" className="text-signal-dark hover:underline">
                 HTMLRadar for Claude Code
               </Link>
-              , and{' '}
+              ,{' '}
               <Link href="/tools/html-to-link" className="text-signal-dark hover:underline">
                 turn an HTML file into a link
+              </Link>
+              , and{' '}
+              <Link href="/tools" className="text-signal-dark hover:underline">
+                all the free HTML tools
               </Link>
               .
             </p>

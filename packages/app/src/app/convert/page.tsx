@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { NavBar } from '@/components/NavBar';
 import { V2Footer } from '@/components/V2Footer';
 import { Faq } from '@/components/Faq';
@@ -68,6 +69,24 @@ export default async function ConvertPage({
         </p>
         <ConvertPanel action={createStagedDocument} resumeToken={resumeToken} signedIn={signedIn} />
         <Faq items={FAQ} />
+
+        <div className="mt-16 border-t border-line pt-10">
+          <p className="text-[14px] leading-relaxed text-ink-soft">
+            Related:{' '}
+            <Link href="/tools/html-to-link" className="text-signal-dark hover:underline">
+              turn an HTML file into a link
+            </Link>
+            ,{' '}
+            <Link href="/tools/claude-artifact-to-pdf" className="text-signal-dark hover:underline">
+              Claude artifact to PDF
+            </Link>
+            , and{' '}
+            <Link href="/tools" className="text-signal-dark hover:underline">
+              all the free HTML tools
+            </Link>
+            .
+          </p>
+        </div>
       </main>
       <V2Footer />
     </>
