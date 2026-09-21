@@ -101,6 +101,31 @@ export async function listDocuments(db: DB, ownerId: string): Promise<DocumentRo
   return results;
 }
 
+/** One page of live documents, newest first, with how many links point at each. */
+export async function listDocumentsPage(
+  db: DB,
+  ownerId: string,
+  opts: { before?: { created_at: string; id: string }; limit: number },
+): Promise<Array<Pick<DocumentRow, 'id' | 'title' | 'created_at'> & { share_count: number }>> {
+  const vals: unknown[] = [ownerId];
+  let before = '';
+  if (opts.before) {
+    vals.push(opts.before.created_at, opts.before.id);
+    before = ' AND (d.created_at < ?2 OR (d.created_at = ?2 AND d.id < ?3))';
+  }
+  const { results } = await db
+    .prepare(
+      `SELECT d.id, d.title, d.created_at,
+              (SELECT count(*) FROM document_shares s WHERE s.document_id = d.id) AS share_count
+         FROM documents d
+        WHERE d.owner_id = ?1 AND d.deleted_at IS NULL${before}
+        ORDER BY d.created_at DESC, d.id DESC LIMIT ${Math.floor(opts.limit)}`,
+    )
+    .bind(...vals)
+    .all<Pick<DocumentRow, 'id' | 'title' | 'created_at'> & { share_count: number }>();
+  return results;
+}
+
 export async function countDocuments(db: DB, ownerId: string): Promise<number> {
   const row = await db
     .prepare('SELECT count(*) AS n FROM documents WHERE owner_id = ?1 AND deleted_at IS NULL')
@@ -613,6 +638,42 @@ export async function listShares(
 }
 
 /** Flip revoked_at. Returns the new value. */
+export async function countShares(db: DB, ownerId: string): Promise<number> {
+  const r = await db
+    .prepare('SELECT count(*) AS n FROM document_shares WHERE owner_id = ?1')
+    .bind(ownerId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+/**
+ * First and last open per share, for the given shares of this owner. Internal
+ * viewers are not opens. Keep `shareIds` to a page (D1 binds ~100 params).
+ */
+export async function shareOpenSummary(
+  db: DB,
+  ownerId: string,
+  shareIds: string[],
+): Promise<Map<string, { first_open: string; last_open: string }>> {
+  const out = new Map<string, { first_open: string; last_open: string }>();
+  if (!shareIds.length) return out;
+  const marks = shareIds.map((_, i) => `?${i + 2}`).join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT se.share_id, min(se.started_at) AS first_open, max(se.started_at) AS last_open
+         FROM sessions se
+         JOIN document_shares sh ON sh.id = se.share_id
+         JOIN viewers v ON v.id = se.viewer_id
+        WHERE sh.owner_id = ?1 AND v.is_internal = 0 AND se.share_id IN (${marks})
+        GROUP BY se.share_id`,
+    )
+    .bind(ownerId, ...shareIds)
+    .all<{ share_id: string; first_open: string; last_open: string }>();
+  for (const r of results)
+    out.set(r.share_id, { first_open: r.first_open, last_open: r.last_open });
+  return out;
+}
+
 export async function toggleShareRevoked(
   db: DB,
   ownerId: string,
