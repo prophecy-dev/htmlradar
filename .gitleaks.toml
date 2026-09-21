@@ -47,4 +47,7 @@ regexes = [
   # a repeating pattern with too little entropy to look like a credential. This scan
   # reads the whole history, so the dead commit still has to be excused by name.
   '''hr_live_0123456789abcdef0123456789abcdef01234567''',
+  # Fake session-cookie HMAC key in packages/app/src/lib/access.test.ts (commit
+  # 35d706a). Signs throwaway test cookies only; never a deployed SESSION_SECRET.
+  '''test-secret-0123456789''',
 ]
