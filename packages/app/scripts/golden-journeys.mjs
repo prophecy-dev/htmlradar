@@ -66,7 +66,8 @@ function run(outPath) {
 /** Every leaf of an object, as `a.b.c` → value. */
 function flatten(value, prefix = '', out = {}) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    for (const [key, v] of Object.entries(value)) flatten(v, prefix ? `${prefix}.${key}` : key, out);
+    for (const [key, v] of Object.entries(value))
+      flatten(v, prefix ? `${prefix}.${key}` : key, out);
   } else {
     // Arrays compare whole and in order: the app_events names are a sequence,
     // and an event that moved is as much a change as one that vanished.
@@ -78,7 +79,8 @@ function flatten(value, prefix = '', out = {}) {
 const show = (value) => (typeof value === 'string' ? value : JSON.stringify(value));
 
 function compare(beforePath, afterPath) {
-  if (!beforePath || !afterPath) die('usage: golden-journeys.mjs compare <before.json> <after.json>');
+  if (!beforePath || !afterPath)
+    die('usage: golden-journeys.mjs compare <before.json> <after.json>');
   const before = flatten(JSON.parse(readFileSync(path.resolve(beforePath), 'utf8')));
   const after = flatten(JSON.parse(readFileSync(path.resolve(afterPath), 'utf8')));
 

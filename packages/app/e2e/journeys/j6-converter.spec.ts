@@ -34,9 +34,17 @@ test.beforeAll(async () => {
   for (const line of ['Golden journey slide one', 'Golden journey slide two']) {
     const page = pdf.addPage([720, 405]);
     page.drawText(line, { x: 48, y: 320, size: 36, font });
-    page.drawText('A generated fixture for the golden journeys.', { x: 48, y: 260, size: 18, font });
+    page.drawText('A generated fixture for the golden journeys.', {
+      x: 48,
+      y: 260,
+      size: 18,
+      font,
+    });
   }
-  pdfPath = path.join(mkdtempSync(path.join(tmpdir(), 'golden-')), `golden journey j6 ${RUN_ID}.pdf`);
+  pdfPath = path.join(
+    mkdtempSync(path.join(tmpdir(), 'golden-')),
+    `golden journey j6 ${RUN_ID}.pdf`,
+  );
   writeFileSync(pdfPath, await pdf.save());
 });
 
@@ -60,7 +68,10 @@ test('J6 converter: a PDF becomes a document in an account, through sign-in', as
     page.getByRole('heading', { name: /your html file is ready/i }),
     'the PDF did not convert',
   ).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByText(/2 slides/), 'the two-page deck did not make two slides').toBeVisible();
+  await expect(
+    page.getByText(/2 slides/),
+    'the two-page deck did not make two slides',
+  ).toBeVisible();
 
   // The hand-off. This parks the converted HTML in the browser and sends the
   // person to sign in with a token that names the waiting file.
@@ -82,7 +93,9 @@ test('J6 converter: a PDF becomes a document in an account, through sign-in', as
     `/documents?id=eq.${documentId}&select=id,title,source_type,deleted_at`,
   );
   expect(documents.length, 'no document row for the converted deck').toBe(1);
-  expect(documents[0]!.source_type, 'the converted deck was not stored as an upload').toBe('upload');
+  expect(documents[0]!.source_type, 'the converted deck was not stored as an upload').toBe(
+    'upload',
+  );
 
   // And it is in the list the person actually looks at.
   await signedIn.goto(`${BASE}/docs`);

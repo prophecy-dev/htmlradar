@@ -66,7 +66,10 @@ test('J8 upgrade path: a third link is refused, and the upgrade page can be paid
     'a capped account was still offered a third link',
   ).toHaveCount(0);
 
-  await page.getByRole('link', { name: /upgrade to pro/i }).first().click();
+  await page
+    .getByRole('link', { name: /upgrade to pro/i })
+    .first()
+    .click();
   await page.waitForURL(/\/upgrade\?reason=share_quota/, { timeout: 30_000 });
   await expect(
     page.getByText(/free tier cap reached/i),

@@ -81,9 +81,10 @@ test('J9 API: create, activity, replace and revoke keep their shapes', async () 
     // Which also means `viewers` is empty here and the shape of a viewer
     // entry — the richest part of this API — is not captured by the snapshot
     // above. J3 covers it, on a share that has a real reader.
-    expect((activity.json as { opened: boolean }).opened, 'an unopened link reports as opened').toBe(
-      false,
-    );
+    expect(
+      (activity.json as { opened: boolean }).opened,
+      'an unopened link reports as opened',
+    ).toBe(false);
 
     const replaced = await api('POST', `/api/v1/documents/${documentId}/replace`, {
       html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>
@@ -104,7 +105,9 @@ test('J9 API: create, activity, replace and revoke keep their shapes', async () 
   // committing it, which is the point — it cannot happen by accident.
   if (!existsSync(SHAPES)) {
     writeFileSync(SHAPES, `${JSON.stringify(shapes, null, 2)}\n`);
-    test.info().annotations.push({ type: 'note', description: `wrote first API snapshot to ${SHAPES}` });
+    test
+      .info()
+      .annotations.push({ type: 'note', description: `wrote first API snapshot to ${SHAPES}` });
   } else {
     expect(
       shapes,

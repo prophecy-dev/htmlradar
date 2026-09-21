@@ -222,7 +222,10 @@ test('J10d a hidden tab accrues nothing, and sections never exceed the session',
     // precisely what a real hide looks like to the code under test.
     await page.evaluate(() => {
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
       document.dispatchEvent(new Event('visibilitychange'));
     });
     await page.waitForTimeout(60_000);

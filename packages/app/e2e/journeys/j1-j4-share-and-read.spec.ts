@@ -122,7 +122,10 @@ test('J1 sender: sign in by e-mail link, upload, gate, copy, land on the share',
   // clipboard is the failure this catches.
   // `.first()`: the page offers the same copy twice — once next to the
   // address and once inside the "waiting for a first read" panel.
-  await ownerPage.getByRole('button', { name: /copy link/i }).first().click();
+  await ownerPage
+    .getByRole('button', { name: /copy link/i })
+    .first()
+    .click();
   await expect(
     ownerPage.getByText(/^copied$/i).first(),
     'the copy button never confirmed',
@@ -133,9 +136,7 @@ test('J1 sender: sign in by e-mail link, upload, gate, copy, land on the share',
 
   record('j1', {
     db: {
-      documents: (
-        await rest(`/documents?id=eq.${documentId}&select=id`)
-      ).length,
+      documents: (await rest(`/documents?id=eq.${documentId}&select=id`)).length,
       shares: (await rest(`/document_shares?document_id=eq.${documentId}&select=id`)).length,
       require_email: true,
     },
@@ -211,9 +212,10 @@ test('J3 sender sees the truth: report, database and notifications agree', async
   );
   const readers = viewers.filter((v) => !v.is_internal);
   expect(readers.length, 'the share should have exactly one real reader').toBe(1);
-  expect(readers[0]!.email?.toLowerCase(), 'the reader is not the address that passed the gate').toBe(
-    reader.toLowerCase(),
-  );
+  expect(
+    readers[0]!.email?.toLowerCase(),
+    'the reader is not the address that passed the gate',
+  ).toBe(reader.toLowerCase());
 
   const sessions = await rest<{
     id: string;
@@ -265,9 +267,10 @@ test('J3 sender sees the truth: report, database and notifications agree', async
   );
   const sent = notifications.filter((n) => n.status !== 'skipped');
   expect(sent.length, 'exactly one "opened" notification should have been queued').toBe(1);
-  expect(sent[0]!.email_to.toLowerCase(), 'the notification went somewhere other than the sender').toBe(
-    JOURNEY_EMAIL.toLowerCase(),
-  );
+  expect(
+    sent[0]!.email_to.toLowerCase(),
+    'the notification went somewhere other than the sender',
+  ).toBe(JOURNEY_EMAIL.toLowerCase());
   expect(sent[0]!.session_id, 'the notification is not about the reader s session').toBe(
     readerSessions[0]!.id,
   );
@@ -282,16 +285,15 @@ test('J3 sender sees the truth: report, database and notifications agree', async
   // few seconds late with that heartbeat. A number far above this would mean
   // the notification had drifted back to a batch or a cron.
   const noticedAfterSeconds =
-    (new Date(sent[0]!.created_at).getTime() -
-      new Date(readerSessionStartedAt).getTime()) /
-    1000;
+    (new Date(sent[0]!.created_at).getTime() - new Date(readerSessionStartedAt).getTime()) / 1000;
   expect(
     noticedAfterSeconds,
     `the sender was told ${Math.round(noticedAfterSeconds)}s after the read began`,
   ).toBeLessThanOrEqual(35);
-  expect(noticedAfterSeconds, 'the notification predates the read it is about').toBeGreaterThanOrEqual(
-    0,
-  );
+  expect(
+    noticedAfterSeconds,
+    'the notification predates the read it is about',
+  ).toBeGreaterThanOrEqual(0);
 
   // The sender's own preview must not mail the sender. It is only a real
   // assertion when the preview produced a session at all, which is why it
@@ -332,8 +334,10 @@ test('J3 sender sees the truth: report, database and notifications agree', async
   }
   // The screen and the database must be telling the same story. They round
   // differently, so this is a tolerance, not an equality.
-  expect(Math.abs(shownActive - activeSeconds), 'the report and the database disagree on time')
-    .toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(shownActive - activeSeconds),
+    'the report and the database disagree on time',
+  ).toBeLessThanOrEqual(2);
 
   // ---- and what the API says about the same read -----------------------
   // J9 snapshots this endpoint's shape, but only ever with an empty viewer
@@ -359,7 +363,9 @@ test('J3 sender sees the truth: report, database and notifications agree', async
     'sections',
   ]);
   expect(
-    Object.keys((activity.viewers[0]!['sections'] as Array<Record<string, unknown>>)[0] ?? {}).sort(),
+    Object.keys(
+      (activity.viewers[0]!['sections'] as Array<Record<string, unknown>>)[0] ?? {},
+    ).sort(),
     'the fields of a section in the public API changed',
   ).toEqual(['time_seconds', 'title']);
 
@@ -415,7 +421,11 @@ test('J4a returning identified reader is recognised as the same reader', async (
     ).toBe(1);
 
     record('j4a', {
-      db: { readers: readers.length, sessions_for_reader: sessions.length, notifications_queued: 1 },
+      db: {
+        readers: readers.length,
+        sessions_for_reader: sessions.length,
+        notifications_queued: 1,
+      },
       screen: {},
     });
   } finally {

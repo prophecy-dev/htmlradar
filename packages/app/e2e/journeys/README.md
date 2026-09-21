@@ -11,20 +11,20 @@ Read this page before you run them. Everything here touches real data.
 
 ## What each journey does
 
-| Journey | The person, and what has to be true afterwards |
-| --- | --- |
-| **J1** | A sender signs in through the real e-mail link — the confirm page, the button — uploads a deck, makes a link with the e-mail gate on, copies it and lands on the link's page. The clipboard really holds the link. |
-| **J2** | A recipient, in a browser that has never seen this site, opens the link, gives an e-mail and reads all three sections with a real pause on each. |
-| **J2b** | The sender opens their own preview of the link. This is setup for the last assertion in J3. |
-| **J3** | The sender's report shows exactly one reader, with that address, a believable reading time and the three sections. The database agrees. Exactly one "opened" notification was queued, it went to the sender, and the sender's own preview queued nothing. |
-| **J4a** | The same reader comes back. The product records one reader with two sessions, and does not mail the sender a second time. |
-| **J4b** | The same thing for an anonymous reader, on a link with no gate. Also checks that the recipient's host serves the same tracker build as `htmlradar.page`, because the recognition depends on it. |
-| **J4c** | Someone opens the link and leaves without reading. The sender is not mailed. Passes: the product already gets this right. |
-| **J5** | A password link refuses the wrong password and accepts the right one; an expired link and a revoked link each show their own page; and none of the three refusals is recorded as a read. |
-| **J6** | Somebody who is not signed in converts a PDF on `/convert`, asks for a tracked link, is sent through sign-in, and comes back to find the converted deck in their account. |
-| **J7** | A link on the account's own custom hostname serves and records a read. Skips with a clear message when the account has no live domain. |
-| **J8** | A free account that has used both its links is refused a third and shown the upgrade prompt; the upgrade page renders and the pay button points at Polar. No checkout is ever started. |
-| **J9** | The four public API calls an integration makes, with their response shapes compared against `api-shapes.json`. |
+| Journey | The person, and what has to be true afterwards                                                                                                                                                                                                                                                                           |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **J1**  | A sender signs in through the real e-mail link — the confirm page, the button — uploads a deck, makes a link with the e-mail gate on, copies it and lands on the link's page. The clipboard really holds the link.                                                                                                       |
+| **J2**  | A recipient, in a browser that has never seen this site, opens the link, gives an e-mail and reads all three sections with a real pause on each.                                                                                                                                                                         |
+| **J2b** | The sender opens their own preview of the link. This is setup for the last assertion in J3.                                                                                                                                                                                                                              |
+| **J3**  | The sender's report shows exactly one reader, with that address, a believable reading time and the three sections. The database agrees. Exactly one "opened" notification was queued, it went to the sender, and the sender's own preview queued nothing.                                                                |
+| **J4a** | The same reader comes back. The product records one reader with two sessions, and does not mail the sender a second time.                                                                                                                                                                                                |
+| **J4b** | The same thing for an anonymous reader, on a link with no gate. Also checks that the recipient's host serves the same tracker build as `htmlradar.page`, because the recognition depends on it.                                                                                                                          |
+| **J4c** | Someone opens the link and leaves without reading. The sender is not mailed. Passes: the product already gets this right.                                                                                                                                                                                                |
+| **J5**  | A password link refuses the wrong password and accepts the right one; an expired link and a revoked link each show their own page; and none of the three refusals is recorded as a read.                                                                                                                                 |
+| **J6**  | Somebody who is not signed in converts a PDF on `/convert`, asks for a tracked link, is sent through sign-in, and comes back to find the converted deck in their account.                                                                                                                                                |
+| **J7**  | A link on the account's own custom hostname serves and records a read. Skips with a clear message when the account has no live domain.                                                                                                                                                                                   |
+| **J8**  | A free account that has used both its links is refused a third and shown the upgrade prompt; the upgrade page renders and the pay button points at Polar. No checkout is ever started.                                                                                                                                   |
+| **J9**  | The four public API calls an integration makes, with their response shapes compared against `api-shapes.json`.                                                                                                                                                                                                           |
 | **J10** | The reading clock, in five parts: a silent reader gets the warm-up plus the thirty-second allowance and no more; one key press renews the allowance; a reader who walks away is capped; a hidden tab accrues nothing; section totals never exceed the session; and the report prints the same number the database holds. |
 
 ## Before you run anything
@@ -33,20 +33,20 @@ Set these in the environment, or in the repository's `.env.local`, which the
 suite reads the same way `e2e/smoke.spec.ts` does. **Nothing here is ever
 printed by the suite.**
 
-| Variable | What it is |
-| --- | --- |
-| `PLAYWRIGHT_BASE_URL` | The application to test. Defaults to `https://htmlradar.com`. Point it at `http://localhost:3000` or at a Cloudflare preview URL. |
-| `PLAYWRIGHT_SHARE_BASE` | The content domain. Defaults to `https://htmlradar.page`. Rarely changed: the proxy has no local mode, so recipient links are served from production even when the app under test is local. |
-| `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | How the journeys read what the product recorded. |
-| `GOLDEN_JOURNEY_EMAIL` | The account the journeys act as. It **must be Pro or comped**, and its address **must be a mail sink** — see the next section. There is no fallback to `JOURNEY_EMAIL`, on purpose. |
-| `HTMLRADAR_API_KEY` | An API key on that same account, for J5, J7, J9 and J10. |
-| `GOLDEN_FREE_EMAIL` | *Optional.* A **free** account that has already used both of its tracked links, for J8. Without it, J8 skips. Also must be a mail sink. |
+| Variable                                                | What it is                                                                                                                                                                                  |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PLAYWRIGHT_BASE_URL`                                   | The application to test. Defaults to `https://htmlradar.com`. Point it at `http://localhost:3000` or at a Cloudflare preview URL.                                                           |
+| `PLAYWRIGHT_SHARE_BASE`                                 | The content domain. Defaults to `https://htmlradar.page`. Rarely changed: the proxy has no local mode, so recipient links are served from production even when the app under test is local. |
+| `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | How the journeys read what the product recorded.                                                                                                                                            |
+| `GOLDEN_JOURNEY_EMAIL`                                  | The account the journeys act as. It **must be Pro or comped**, and its address **must be a mail sink** — see the next section. There is no fallback to `JOURNEY_EMAIL`, on purpose.         |
+| `HTMLRADAR_API_KEY`                                     | An API key on that same account, for J5, J7, J9 and J10.                                                                                                                                    |
+| `GOLDEN_FREE_EMAIL`                                     | _Optional._ A **free** account that has already used both of its tracked links, for J8. Without it, J8 skips. Also must be a mail sink.                                                     |
 
 ## Accounts, and why they are mail sinks
 
 **A journey does not simulate a read. It performs one**, and the product then
-does what it does for any real read: it e-mails the owner *"somebody opened
-your document"*, and on a revoked or expired link it e-mails them that too.
+does what it does for any real read: it e-mails the owner _"somebody opened
+your document"_, and on a revoked or expired link it e-mails them that too.
 That is not a side effect to be suppressed — J3 asserts those e-mails, and a
 suite that stopped them would stop proving the thing senders pay for.
 
@@ -172,7 +172,11 @@ and would bury the comparison in noise.
         "notifications_queued": 1,
         "notifications_skipped": 1,
         "active_seconds": 13,
-        "section_titles": ["What this deck is for", "Why three sections", "What a failure here means"]
+        "section_titles": [
+          "What this deck is for",
+          "Why three sections",
+          "What a failure here means"
+        ]
       },
       "screen": { "viewers": 1, "sessions": 1, "active_seconds": 13, "reader_named": true },
       "events": ["document.created", "share.created", "share.copied", "share.first_view"]
@@ -270,17 +274,17 @@ Every one of these goes to the **owner account**, which is a mail sink that
 accepts and discards. Readers are on `example.com` and receive nothing,
 because HTMLRadar never mails a recipient.
 
-| Journey | E-mail the product sends | How many per run |
-| --- | --- | --- |
-| J2 → J3 | *"&lt;reader&gt;@example.com opened golden-journey j1 …"* | 1 |
-| J2b | none — the sender's own preview is skipped as an internal viewer | 0 |
-| J4a | none — the returning reader is already known | 0 |
-| J4b | *"An anonymous viewer opened golden-journey j1 …"* | 1 |
-| J4c | none — an open with no reading time writes no session | 0 |
-| J5 | *"golden j5 expired tried to open … but the link is past its expiry"* and the same for the revoked link | 2 |
-| J6, J8, J9 | none | 0 |
-| J7 | *"An anonymous viewer opened golden-journey j7 …"* | 1 |
-| J10 | one per reader that reads: silent, nudge, away, hidden | 4 |
+| Journey    | E-mail the product sends                                                                                | How many per run |
+| ---------- | ------------------------------------------------------------------------------------------------------- | ---------------- |
+| J2 → J3    | _"&lt;reader&gt;@example.com opened golden-journey j1 …"_                                               | 1                |
+| J2b        | none — the sender's own preview is skipped as an internal viewer                                        | 0                |
+| J4a        | none — the returning reader is already known                                                            | 0                |
+| J4b        | _"An anonymous viewer opened golden-journey j1 …"_                                                      | 1                |
+| J4c        | none — an open with no reading time writes no session                                                   | 0                |
+| J5         | _"golden j5 expired tried to open … but the link is past its expiry"_ and the same for the revoked link | 2                |
+| J6, J8, J9 | none                                                                                                    | 0                |
+| J7         | _"An anonymous viewer opened golden-journey j7 …"_                                                      | 1                |
+| J10        | one per reader that reads: silent, nudge, away, hidden                                                  | 4                |
 
 About nine e-mails per full run, all to the sink. Sign-in links are **not**
 sent at all: the journeys mint the token through the Supabase admin API,

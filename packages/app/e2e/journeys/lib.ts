@@ -41,19 +41,15 @@ export const PARITY_DIR = path.resolve(__dirname, '.parity');
 
 export const FIXTURES = path.resolve(__dirname, '../fixtures');
 
-function need(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`golden journeys: missing env ${name}`);
-  return value;
-}
-
 const trimSlash = (value: string) => value.replace(/\/+$/, '');
 
 /** The application under test. Local dev, a preview deployment or prod. */
 export const BASE = trimSlash(process.env['PLAYWRIGHT_BASE_URL'] ?? 'https://htmlradar.com');
 /** The content domain. Always the real one: the proxy has no local mode, so
  *  a recipient link is served from production even when the app is local. */
-export const SHARE_BASE = trimSlash(process.env['PLAYWRIGHT_SHARE_BASE'] ?? 'https://htmlradar.page');
+export const SHARE_BASE = trimSlash(
+  process.env['PLAYWRIGHT_SHARE_BASE'] ?? 'https://htmlradar.page',
+);
 
 export const SUPABASE_URL = trimSlash(
   process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? process.env['SUPABASE_URL'] ?? '',
@@ -163,7 +159,8 @@ export async function rest<T = Record<string, unknown>>(
   });
   const text = await res.text();
   // The key is never in the message — only the path and the status.
-  if (!res.ok) throw new Error(`${init.method ?? 'GET'} ${path} → ${res.status}: ${text.slice(0, 200)}`);
+  if (!res.ok)
+    throw new Error(`${init.method ?? 'GET'} ${path} → ${res.status}: ${text.slice(0, 200)}`);
   return text ? (JSON.parse(text) as T[]) : [];
 }
 
@@ -271,7 +268,8 @@ export async function readSections(page: Page, dwellMs = 4000): Promise<number> 
 /** Force the tracker to send what it has, rather than racing its heartbeat. */
 export async function flush(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    const tracker = (window as unknown as { HTMLRadar?: { flush?: () => Promise<void> } }).HTMLRadar;
+    const tracker = (window as unknown as { HTMLRadar?: { flush?: () => Promise<void> } })
+      .HTMLRadar;
     if (tracker?.flush) await tracker.flush();
   });
   // The flush returns before the row is durable in Postgres.
@@ -359,10 +357,7 @@ export async function cleanupDocuments(titles?: string[]): Promise<number> {
     const filter = titles?.length
       ? `&title=in.(${titles.map((t) => `"${t.replace(/"/g, '')}"`).join(',')})`
       : `&title=like.${encodeURIComponent(TITLE_PREFIX)}*`;
-    const removed = await rest(
-      `/documents?owner_id=eq.${owner}${filter}`,
-      { method: 'DELETE' },
-    );
+    const removed = await rest(`/documents?owner_id=eq.${owner}${filter}`, { method: 'DELETE' });
     return removed.length;
   } catch {
     return -1;
