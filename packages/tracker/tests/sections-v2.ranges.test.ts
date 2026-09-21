@@ -556,3 +556,74 @@ describe('sections spend the session clock and never exceed it', () => {
     t.stop();
   });
 });
+
+describe('a deck that scrolls inside a container', () => {
+  // Our sales decks scroll a `.deck` (100vh, overflow-y: scroll), not the
+  // window, and the proxy injects a position:fixed, full-viewport watermark
+  // layer and a fixed "tracked" pill after it. The last section's range used
+  // to climb out of the deck and take both, so it covered the whole window at
+  // all times and won every sample (2026-09-21, live test on the Hivemarket
+  // deck: 29 s on slide 13, 0 on slides 1-7).
+  function rect(top: number, height: number): DOMRect {
+    return {
+      top,
+      bottom: top + height,
+      height,
+      width: 1000,
+      left: 0,
+      right: 1000,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  function deckWithOverlay(): number[] {
+    const slide = (n: string) =>
+      `<section><p id="${n}-eye">Hivemarket</p><h2 id="${n}">Slide ${n}</h2><p id="${n}-body">Body.</p></section>`;
+    document.body.innerHTML = `
+      <div class="deck" id="deck" style="overflow-y: scroll">
+        ${slide('one')}${slide('two')}${slide('three')}
+      </div>
+      <div id="wm" style="position: fixed"></div>
+      <a id="pill" style="position: fixed">This link is tracked</a>`;
+    const deck = document.getElementById('deck')!;
+    Object.defineProperty(deck, 'scrollHeight', { configurable: true, value: 3 * VIEWPORT });
+    Object.defineProperty(deck, 'clientHeight', { configurable: true, value: VIEWPORT });
+    document.getElementById('wm')!.getBoundingClientRect = () => rect(0, VIEWPORT);
+    document.getElementById('pill')!.getBoundingClientRect = () => rect(760, 30);
+
+    // Each slide opens with an eyebrow above its heading, so a slide's range
+    // runs on into the next slide's eyebrow: a little taller than the window,
+    // coverage just under 1, which is what let the overlaid last slide win.
+    const tops: number[] = [];
+    let top = 0;
+    for (const name of ['one', 'two', 'three']) {
+      tops.push(top);
+      place(document.getElementById(`${name}-eye`)!, top, 20);
+      place(document.getElementById(name)!, top + 20, HEADING_HEIGHT);
+      place(
+        document.getElementById(`${name}-body`)!,
+        top + 20 + HEADING_HEIGHT,
+        VIEWPORT - 20 - HEADING_HEIGHT,
+      );
+      top += VIEWPORT;
+    }
+    return tops;
+  }
+
+  it('credits the slide on screen, not the last slide under the fixed overlay', () => {
+    const tops = deckWithOverlay();
+    const t = tracker();
+    scrollTo(tops[0]!);
+    advance(10_000);
+    scrollTo(tops[1]!);
+    advance(10_000);
+    const time = timeById(t);
+    t.stop();
+
+    expect(time['one']).toBeGreaterThan(8.5);
+    expect(time['two']).toBeGreaterThan(8.5);
+    expect(time['three'] ?? 0).toBeLessThan(0.5);
+  });
+});
