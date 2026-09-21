@@ -14,8 +14,7 @@ import { db } from '@/lib/cf';
 import { SectionMark } from '@/components/SectionMark';
 import { apiKeyPrefix, generateApiKey, hashApiKey } from '@/lib/api-auth';
 import { ApiKeys, type ApiKeyRow } from './ApiKeys';
-
-export const runtime = 'edge';
+import { SignOutButton } from '@/components/SignOutButton';
 
 // A key is generated, hashed, and the hash is what is written. The plaintext
 // exists only in this function's return value and in the browser tab that
@@ -80,11 +79,10 @@ async function saveProfileAction(formData: FormData) {
   redirect(error ? `/settings?error=${encodeURIComponent(error)}` : '/settings?saved=1');
 }
 
-export default async function SettingsPage({
-  searchParams,
-}: {
-  searchParams?: { saved?: string; error?: string };
+export default async function SettingsPage(props: {
+  searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  const searchParams = await props.searchParams;
   const user = await requireUser();
   const d = db();
   const [profile, keys] = await Promise.all([getProfile(d, user.id), listApiKeys(d, user.id)]);
@@ -127,7 +125,7 @@ export default async function SettingsPage({
 
       <dl className="mt-10 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-paper">
         <Row label="Email" value={profile?.email ?? user.email} />
-        <Row label="Signed in with" value="Cloudflare Access" />
+        <Row label="Signed in with" value="Privy (e-mail code)" />
         <Row label="Account created" value={accountCreated} />
       </dl>
 
@@ -176,14 +174,10 @@ export default async function SettingsPage({
       <ApiKeys keys={keyRows} createAction={createApiKeyAction} revokeAction={revokeApiKeyAction} />
 
       <div className="mt-12 border-t border-line pt-8">
-        {/* Cloudflare Access owns the session; its logout endpoint ends it. */}
-        <a
-          href="/cdn-cgi/access/logout"
-          className="inline-flex items-center gap-2 rounded-md border border-line bg-paper px-4 py-2.5 font-mono text-[12px] uppercase tracking-[0.16em] text-graphite transition hover:border-alert hover:text-alert"
-        >
+        <SignOutButton className="inline-flex items-center gap-2 rounded-md border border-line bg-paper px-4 py-2.5 font-mono text-[12px] uppercase tracking-[0.16em] text-graphite transition hover:border-alert hover:text-alert">
           <LogOut className="size-3.5" />
           Sign out
-        </a>
+        </SignOutButton>
       </div>
     </div>
   );

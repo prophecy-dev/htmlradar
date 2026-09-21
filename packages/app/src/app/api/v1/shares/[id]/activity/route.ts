@@ -13,8 +13,6 @@ import { isMetaSectionTitle } from '@/lib/section-filter';
 import { shareUrl } from '@/lib/share-url';
 import type { SectionEvent, Session, Viewer } from '@/lib/types';
 
-export const runtime = 'edge';
-
 interface ViewerDetail {
   country: string | null;
   city: string | null;
@@ -33,7 +31,8 @@ interface ViewerOut {
   detail?: ViewerDetail;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await authenticateApiKey(req, { name: 'activity', max: CHEAP_MAX });
   if ('error' in auth) return auth.error;
   const { caller } = auth;

@@ -2,9 +2,7 @@ import type { ReactNode } from 'react';
 import { NavBar } from '@/components/NavBar';
 import { TimezoneSync } from '@/components/TimezoneSync';
 
-export const runtime = 'edge';
-
-// The middleware refuses anyone Cloudflare Access did not sign in. Pages that
+// The middleware sends anyone without a dashboard session to /login. Pages that
 // need the user object call `requireUser()` themselves.
 //
 // TimezoneSync runs once on mount and writes the browser's IANA timezone

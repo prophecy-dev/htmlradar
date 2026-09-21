@@ -20,13 +20,12 @@ import {
 import { db } from '@/lib/cf';
 import { r2Key, uploadHtml } from '@/lib/r2';
 
-export const runtime = 'edge';
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_API_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 5.5 * 1024 * 1024;
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await authenticateApiKey(req, {
     name: 'replace',
     max: CREATION_MAX,

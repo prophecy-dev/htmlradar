@@ -42,8 +42,6 @@ import { describeSlugError } from '@/lib/share-slug';
 import { shareUrl } from '@/lib/share-url';
 import { verifiedGateEnabled } from '@/lib/verified-gate';
 
-export const runtime = 'edge';
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // An edge isolate decodes this comfortably; the browser upload allows 30 MB.
 const MAX_API_HTML_BYTES = 5 * 1024 * 1024;

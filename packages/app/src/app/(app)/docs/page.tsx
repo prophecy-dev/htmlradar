@@ -11,8 +11,6 @@ import { db } from '@/lib/cf';
 import { SectionMark } from '@/components/SectionMark';
 import { HeroRadar } from '@/components/HeroRadar';
 
-export const runtime = 'edge';
-
 function formatDuration(seconds: number): string {
   if (!seconds || seconds < 1) return '—';
   if (seconds < 60) return `${Math.round(seconds)}s`;

@@ -13,8 +13,6 @@ import {
 } from '@/lib/api-auth';
 import { db } from '@/lib/cf';
 
-export const runtime = 'edge';
-
 export async function GET(req: NextRequest) {
   const auth = await authenticateApiKey(req, { name: 'documents-list', max: CHEAP_MAX });
   if ('error' in auth) return auth.error;

@@ -38,8 +38,8 @@
 
 /**
  * Read inside the function rather than at module load, for the reason
- * customDomainsEnabled gives: next-on-pages resolves env at request time on the
- * edge runtime and not always at module load.
+ * customDomainsEnabled gives: on the Worker, env is resolved at request time
+ * and not always at module load.
  *
  * NEXT_PUBLIC_, because the share form is a client component and has to know
  * whether to render the toggle at all. There is nothing secret in the answer —

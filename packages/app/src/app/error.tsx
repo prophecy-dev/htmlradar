@@ -11,8 +11,6 @@ import { HeroRadar } from '@/components/HeroRadar';
 import { SectionMark } from '@/components/SectionMark';
 import { ArrowLeft, RefreshCcw } from 'lucide-react';
 
-export const runtime = 'edge';
-
 export default function GlobalError({
   error,
   reset,

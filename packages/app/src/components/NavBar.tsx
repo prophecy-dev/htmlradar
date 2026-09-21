@@ -1,8 +1,9 @@
-// App header. Everyone who sees it is signed in through Cloudflare Access.
+// App header. Everyone who sees it is signed in (Privy e-mail, lib/access.ts).
 
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth';
 import { Logo } from './Logo';
+import { SignOutButton } from './SignOutButton';
 
 export async function NavBar(_props: { app?: boolean } = {}) {
   const user = await getCurrentUser();
@@ -23,6 +24,7 @@ export async function NavBar(_props: { app?: boolean } = {}) {
           <Link href="/settings" className="text-graphite hover:text-signal-dark">
             {user?.email ?? 'Settings'}
           </Link>
+          <SignOutButton />
         </nav>
       </div>
     </header>

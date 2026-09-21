@@ -19,6 +19,7 @@ module.exports = {
     'build/',
     '.next/',
     '.vercel/',
+    '.open-next/',
     'node_modules/',
     '*.config.*',
     // Public assets that ship compiled bundles (tracker IIFE etc.)

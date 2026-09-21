@@ -3,10 +3,9 @@ import { NavBar } from '@/components/NavBar';
 import { createStagedDocument } from '@/app/(app)/new/actions';
 import { ConvertPanel } from './ConvertPanel';
 
-export const runtime = 'edge';
 export const metadata: Metadata = { title: 'PDF deck to HTML' };
 
-// Behind Cloudflare Access like every other page, so the visitor is always
+// Behind the dashboard sign-in like every other page, so the visitor is always
 // signed in: the converted deck can go straight to a tracked link.
 export default async function ConvertPage({
   searchParams,

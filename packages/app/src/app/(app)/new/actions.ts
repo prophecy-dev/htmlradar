@@ -95,9 +95,9 @@ export async function createStagedDocument(formData: FormData): Promise<HandoffU
       },
       creationId,
     );
-    // No revalidatePath here: on the edge runtime via next-on-pages it crashes
-    // the post-action re-render of the calling page. /docs reads fresh on
-    // every request, so there is nothing to revalidate.
+    // No revalidatePath here (under next-on-pages it crashed the post-action
+    // re-render of the calling page). /docs reads fresh on every request, so
+    // there is nothing to revalidate.
     return { ok: true, documentId };
   } catch (e) {
     console.error('[new] staged create failed', e);

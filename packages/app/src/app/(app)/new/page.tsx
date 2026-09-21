@@ -14,8 +14,6 @@ import { createDocument } from './actions';
 import { NewDocumentForm } from './NewDocumentForm';
 import { parseNewDocumentMode } from '@/lib/new-document-mode';
 
-export const runtime = 'edge';
-
 type SearchParams = Promise<{ upload_error?: string; mode?: string }>;
 
 export default async function NewDocumentPage({ searchParams }: { searchParams: SearchParams }) {

@@ -1,23 +1,25 @@
 # @htmlradar/app — the dashboard
 
-Somnia-internal build: Next.js 14 on Cloudflare Pages (via `@cloudflare/next-on-pages`),
-data in D1 (`DB`), files in R2 (`DOCS_BUCKET`), sign-in by Cloudflare Access. No
+Somnia-internal build: Next.js 16 on a Cloudflare Worker (via `@opennextjs/cloudflare`),
+data in D1 (`DB`), files in R2 (`DOCS_BUCKET`), sign-in by Privy e-mail login. No
 Supabase, no billing, no marketing pages. Bindings live in `wrangler.jsonc`; settings
 are listed in `.env.example`.
 
-## Cloudflare Access
+## Sign-in
 
-Put the whole Pages hostname behind an Access application, and set
-`ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` so the app verifies every request's
-`Cf-Access-Jwt-Assertion` itself. `ALLOWED_EMAIL_DOMAINS` narrows it further. Anyone who
-gets past Access gets a profile, keyed by their lower-cased e-mail, on first visit.
+`/login` runs Privy with e-mail codes only. The page posts the Privy **identity token** to
+`/api/auth/session`, which verifies it against the Privy app's JWKS (`PRIVY_APP_ID`), reads
+the e-mail from its linked accounts and, if the domain is in `ALLOWED_EMAIL_DOMAINS`
+(default `somnia.foundation`), sets a 12-hour `hr_session` cookie signed with
+`SESSION_SECRET`. The middleware checks that cookie on every request (and the domain again).
+Anyone signed in gets a profile, keyed by their lower-cased e-mail, on first visit.
 
-**`/api/v1/*` needs a Bypass policy.** The public API (and `packages/mcp`) authenticates
-with `Authorization: Bearer hr_live_…` keys created under Settings → API keys; Access
-would otherwise answer those requests with its login page. Add a second Access
-application for the path `/api/v1/` on the same hostname with a single **Bypass /
-Everyone** policy. The middleware skips that path, and every route there refuses a
-request without a valid key.
+In the Privy dashboard: e-mail login on, the dashboard origin in the allowed origins, and
+"Return user data in an identity token" on.
+
+`/api/v1/*` skips the sign-in: the public API (and `packages/mcp`) authenticates with
+`Authorization: Bearer hr_live_…` keys created under Settings → API keys, and every route
+there refuses a request without a valid key.
 
 ## Local development
 
@@ -25,17 +27,20 @@ request without a valid key.
 pnpm install
 cd packages/app
 npx wrangler d1 migrations apply htmlradar --local   # D1 simulation under .wrangler/state
-ACCESS_INSECURE_DEV=1 DEV_USER_EMAIL=you@somnia.network SESSION_SECRET=dev-secret pnpm dev
+ACCESS_INSECURE_DEV=1 DEV_USER_EMAIL=you@somnia.foundation pnpm dev
 ```
 
-`next dev` gets local D1 and R2 through `setupDevPlatform()` (see `next.config.mjs`).
-Without Access configured (`ACCESS_TEAM_DOMAIN` + `ACCESS_AUD`) the app refuses everyone, unless `ACCESS_INSECURE_DEV=1` — local development only; it trusts a header anyone can send.
+`next dev` gets local D1 and R2 through `initOpenNextCloudflareForDev()` (see `next.config.mjs`).
+That skips sign-in. To try the real Privy login locally, set `PRIVY_APP_ID` and
+`SESSION_SECRET` instead (the dev fallback is ignored once `SESSION_SECRET` is set).
+Without `SESSION_SECRET` and without `ACCESS_INSECURE_DEV=1` the app refuses everyone.
 
-On native Windows, `next dev` (14.2) fails to render any edge-runtime page that uses a
-client component (`resolveClientReference … reading 'default'`), even a two-line one;
-the API routes work. Use WSL or macOS/Linux for the UI. `build:edge` needs them too.
+## Build, preview, deploy
 
-## Build
+`opennextjs-cloudflare` does not run on native Windows; use WSL, macOS/Linux or CI.
 
-`pnpm --filter @htmlradar/app build:edge` runs `next-on-pages` and writes
-`.vercel/output/static`, the `pages_build_output_dir`.
+```sh
+pnpm --filter @htmlradar/app build:cf   # next build + OpenNext bundle into .open-next/
+pnpm --filter @htmlradar/app preview    # build:cf, then the Worker locally (reads .dev.vars)
+pnpm --filter @htmlradar/app deploy     # build:cf, then deploy the htmlradar-app Worker
+```
