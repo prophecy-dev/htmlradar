@@ -29,8 +29,6 @@ export interface Config {
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
-export const DEFAULT_BASE_URL = 'https://htmlradar.com';
-
 export interface ShareResponse {
   share_id: string;
   document_id: string;
@@ -174,11 +172,28 @@ function keyProblem(apiKey: string): string | null {
 // knows what a process is.
 export function loadConfig(env: Record<string, string | undefined>): Config {
   const apiKey = env['HTMLRADAR_API_KEY']?.trim() ?? '';
-  // Trailing slashes make every request path double-slashed, which some
-  // edge routers 301 to a URL that drops the Authorization header.
-  const baseUrl = (env['HTMLRADAR_API_URL']?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
-  const problem = keyProblem(apiKey);
+  // There is no default: this build talks to a self-hosted dashboard only, and
+  // silently sending a key to somebody else's service is the one failure a
+  // default would invite. Trailing slashes make every request path
+  // double-slashed, which some edge routers 301 to a URL that drops the
+  // Authorization header.
+  const baseUrl = (env['HTMLRADAR_API_URL']?.trim() ?? '').replace(/\/+$/, '');
+  const problem = keyProblem(apiKey) ?? urlProblem(baseUrl);
   return problem === null ? { apiKey, baseUrl } : { apiKey: '', baseUrl, keyProblem: problem };
+}
+
+export const NO_API_URL_MESSAGE =
+  'HTMLRADAR_API_URL is not set, so this server does not know which HTMLRadar dashboard to ' +
+  'talk to. Set it to the dashboard address (for example https://radar.example.com) and ' +
+  'restart this client so it picks it up.';
+
+export const BAD_API_URL_MESSAGE =
+  'HTMLRADAR_API_URL is not an http(s) address. Set it to the dashboard address (for example ' +
+  'https://radar.example.com) and restart this client so it picks it up.';
+
+function urlProblem(baseUrl: string): string | null {
+  if (!baseUrl) return NO_API_URL_MESSAGE;
+  return /^https?:\/\/[^/\s]+/i.test(baseUrl) ? null : BAD_API_URL_MESSAGE;
 }
 
 export async function apiFetch<T>(

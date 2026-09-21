@@ -1,0 +1,32 @@
+// Cloudflare Pages config for the dashboard (Next.js via next-on-pages).
+//
+// The whole app sits behind Cloudflare Access; /api/v1/* needs an Access
+// Bypass policy so API keys (and packages/mcp) can reach it. See README.
+//
+// Secrets and plain vars (set in the Pages project, or .dev.vars locally):
+//   ACCESS_TEAM_DOMAIN     e.g. somnia.cloudflareaccess.com
+//   ACCESS_AUD             the Access application's AUD tag
+//   ALLOWED_EMAIL_DOMAINS  e.g. somnia.network,hive.land (empty = any Access user)
+//   SESSION_SECRET         shared with the proxy: signs owner preview tokens
+//   DEV_USER_EMAIL         local development only, never in production
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "htmlradar-app",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "pages_build_output_dir": ".vercel/output/static",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "htmlradar",
+      "database_id": "2efffb03-a481-4b53-b767-77689e5469a9",
+      "migrations_dir": "../db/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "DOCS_BUCKET",
+      "bucket_name": "htmlradar-docs",
+    },
+  ],
+}

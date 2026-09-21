@@ -396,6 +396,11 @@ function rangeMembers(heading: HTMLElement, stop: HTMLElement | null): HTMLEleme
       // without taking the container itself.
       const parent = node.parentElement;
       if (!parent || parent === document.body || parent === document.documentElement) break;
+      // Never climb out of a scroll container (a `.deck` that scrolls instead
+      // of the window). What follows it — a fixed footer, a nav — is on screen
+      // the whole time, and taking it into the last section hands that section
+      // every second of the read.
+      if (isScroller(parent)) break;
       node = parent;
       continue;
     }
@@ -409,10 +414,30 @@ function rangeMembers(heading: HTMLElement, stop: HTMLElement | null): HTMLEleme
     }
     if (!next || next === stop) break;
 
-    members.push(next);
+    // Fixed and sticky elements sit in the viewport whatever is scrolled, so
+    // their box says nothing about where the reader is.
+    if (!isPinned(next)) members.push(next);
     node = next;
   }
   return members;
+}
+
+function isScroller(el: HTMLElement): boolean {
+  try {
+    const oy = getComputedStyle(el).overflowY;
+    return (oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight;
+  } catch {
+    return false;
+  }
+}
+
+function isPinned(el: HTMLElement): boolean {
+  try {
+    const p = getComputedStyle(el).position;
+    return p === 'fixed' || p === 'sticky';
+  } catch {
+    return false;
+  }
 }
 
 // The range's geometry: the union of its members' boxes, in window

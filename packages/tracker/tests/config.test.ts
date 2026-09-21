@@ -19,26 +19,23 @@ describe('resolveConfig', () => {
   it('returns null when required script attrs are missing', () => {
     expect(resolveConfig(null)).toBeNull();
     expect(resolveConfig(withScript({}))).toBeNull();
-    expect(resolveConfig(withScript({ 'data-supabase-url': 'x' }))).toBeNull();
+    expect(resolveConfig(withScript({ 'data-endpoint': 'x' }))).toBeNull();
   });
 
-  it('reads supabase + slug from data attributes', () => {
+  it('reads endpoint + slug from data attributes', () => {
     const el = withScript({
-      'data-supabase-url': 'https://x.supabase.co',
-      'data-supabase-anon-key': 'eyJanon',
+      'data-endpoint': 'https://docs.example',
       'data-share-slug': 'swift-falcon-a3f2',
     });
     const config = resolveConfig(el);
-    expect(config?.supabaseUrl).toBe('https://x.supabase.co');
-    expect(config?.supabaseAnonKey).toBe('eyJanon');
+    expect(config?.endpoint).toBe('https://docs.example');
     expect(config?.shareSlug).toBe('swift-falcon-a3f2');
   });
 
   it('uses 3000ms minDwell default (audit F-7)', () => {
     const config = resolveConfig(
       withScript({
-        'data-supabase-url': 'https://x.supabase.co',
-        'data-supabase-anon-key': 'eyJanon',
+        'data-endpoint': 'https://docs.example',
         'data-share-slug': 's',
       }),
     );
@@ -47,18 +44,17 @@ describe('resolveConfig', () => {
 
   it('runtime config overrides data attrs and merges with defaults', () => {
     window.HTMLRadarConfig = {
-      supabaseUrl: 'https://override.supabase.co',
+      endpoint: 'https://override.example',
       sections: { minDwellMs: 1500 },
       gate: { copy: { heading: 'Custom heading' } },
     };
     const config = resolveConfig(
       withScript({
-        'data-supabase-url': 'https://from-attr.supabase.co',
-        'data-supabase-anon-key': 'eyJanon',
+        'data-endpoint': 'https://from-attr.example',
         'data-share-slug': 's',
       }),
     );
-    expect(config?.supabaseUrl).toBe('https://override.supabase.co');
+    expect(config?.endpoint).toBe('https://override.example');
     expect(config?.sections.minDwellMs).toBe(1500);
     expect(config?.sections.boundaryOffsetPx).toBe(120); // default kept
     expect(config?.gate.copy.heading).toBe('Custom heading');
@@ -72,8 +68,7 @@ describe('resolveConfig', () => {
     };
     const config = resolveConfig(
       withScript({
-        'data-supabase-url': 'https://x.supabase.co',
-        'data-supabase-anon-key': 'eyJanon',
+        'data-endpoint': 'https://docs.example',
         'data-share-slug': 's',
       }),
     );
@@ -90,8 +85,7 @@ describe('resolveConfig', () => {
     window.HTMLRadarConfig = { readerId: 'a'.repeat(64) };
     const config = resolveConfig(
       withScript({
-        'data-supabase-url': 'https://x.supabase.co',
-        'data-supabase-anon-key': 'eyJanon',
+        'data-endpoint': 'https://docs.example',
         'data-share-slug': 's',
       }),
     );
@@ -103,8 +97,7 @@ describe('resolveConfig', () => {
   it('leaves readerId unset when the proxy did not supply one', () => {
     const config = resolveConfig(
       withScript({
-        'data-supabase-url': 'https://x.supabase.co',
-        'data-supabase-anon-key': 'eyJanon',
+        'data-endpoint': 'https://docs.example',
         'data-share-slug': 's',
       }),
     );

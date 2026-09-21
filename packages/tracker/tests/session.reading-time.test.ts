@@ -25,8 +25,7 @@ let flushCount = 0;
 function makeConfig(over: Partial<TrackerConfig> = {}): TrackerConfig {
   return {
     ...DEFAULTS,
-    supabaseUrl: 'https://example.test',
-    supabaseAnonKey: 'anon',
+    endpoint: 'https://example.test',
     shareSlug: 'test-slug',
     hooks: {
       beforeFlush: (p: FlushPayload) => {

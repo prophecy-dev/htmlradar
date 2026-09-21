@@ -5,7 +5,9 @@
 
 import Link from 'next/link';
 import { ArrowRight, FileText, Link2 } from 'lucide-react';
-import { requireUser, serverClient } from '@/lib/supabase-server';
+import { listDocuments, listSessions, listShares } from '@htmlradar/db/owner';
+import { requireUser } from '@/lib/auth';
+import { db } from '@/lib/cf';
 import { SectionMark } from '@/components/SectionMark';
 import { HeroRadar } from '@/components/HeroRadar';
 
@@ -34,55 +36,20 @@ function formatRelative(iso: string | null | undefined): string {
 }
 
 export default async function DocumentsPage() {
-  await requireUser();
-  const supabase = serverClient();
-
-  // Fan-out: docs + shares + recent sessions in three parallel queries.
-  // We aggregate client-side because the join cost in Postgres for these
-  // small tables (per-user scoped via RLS) is similar to assembling in
-  // memory and the latter is easier to read.
-  const [docsRes, sharesRes] = await Promise.all([
-    supabase
-      .from('documents')
-      .select('id, title, source_type, current_version, created_at, last_viewed_by_owner_at')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('document_shares')
-      .select('id, document_id, revoked_at, expires_at')
-      .is('revoked_at', null),
-  ]);
-
-  const docs = docsRes.data ?? [];
-  const shares = sharesRes.data ?? [];
+  const user = await requireUser();
+  const d = db();
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const shareIds = shares.map((s) => s.id);
-
-  // One sessions query for the entire library — used for "reads this
-  // week" stat and per-doc "last opened" + active-time average.
-  const sessionsRes = shareIds.length
-    ? await supabase
-        .from('sessions')
-        .select('share_id, started_at, active_time_seconds')
-        .in('share_id', shareIds)
-        .gte('started_at', sevenDaysAgo)
-    : { data: [] as Array<{ share_id: string; started_at: string; active_time_seconds: number }> };
-
-  // Also fetch ALL sessions (not just 7d) just for the per-doc "last
-  // opened" relative timestamp. We bound the query to the user's own
-  // shares so it stays cheap.
-  const allSessionsRes = shareIds.length
-    ? await supabase
-        .from('sessions')
-        .select('share_id, started_at, active_time_seconds')
-        .in('share_id', shareIds)
-        .order('started_at', { ascending: false })
-        .limit(500)
-    : { data: [] as Array<{ share_id: string; started_at: string; active_time_seconds: number }> };
-
-  const weeklySessions = sessionsRes.data ?? [];
-  const recentSessions = allSessionsRes.data ?? [];
+  // Docs, live shares and the 500 most recent sessions in parallel; the
+  // roll-ups below are cheaper in memory than as more queries.
+  const [docs, shares, allSessions] = await Promise.all([
+    listDocuments(d, user.id),
+    listShares(d, user.id, { activeOnly: true }),
+    listSessions(d, user.id, {}, { limit: 500 }),
+  ]);
+  const liveShareIds = new Set(shares.map((s) => s.id));
+  const recentSessions = allSessions.filter((s) => liveShareIds.has(s.share_id));
+  const weeklySessions = recentSessions.filter((s) => s.started_at >= sevenDaysAgo);
 
   // Map share_id → document_id for fast roll-ups.
   const shareToDoc = new Map(shares.map((s) => [s.id, s.document_id]));
@@ -117,8 +84,8 @@ export default async function DocumentsPage() {
   // self-clears as soon as the owner opens the doc — no animation, no
   // 24h ticking window, no "still showing yesterday's pulse" feel.
   const lastViewedByDoc = new Map<string, number>();
-  for (const d of docs) {
-    lastViewedByDoc.set(d.id, new Date(d.last_viewed_by_owner_at ?? d.created_at).getTime());
+  for (const doc of docs) {
+    lastViewedByDoc.set(doc.id, new Date(doc.last_viewed_by_owner_at ?? doc.created_at).getTime());
   }
   const activeDocIds = new Set<string>();
   for (const sess of recentSessions) {

@@ -3,7 +3,9 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import {
   loadConfig,
+  BAD_API_URL_MESSAGE,
   MALFORMED_API_KEY_MESSAGE,
+  NO_API_URL_MESSAGE,
   NO_API_KEY_MESSAGE,
   placeholderKeyMessage,
   type Config,
@@ -50,6 +52,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const SELF_HOSTED = 'https://radar.example.com';
 const wellFormedKey = 'hr_live_' + '0123456789abcdef0123456789abcdef01234567';
 
 describe('loadConfig', () => {
@@ -60,7 +63,7 @@ describe('loadConfig', () => {
     for (const env of [{}, { HTMLRADAR_API_KEY: '  ' }]) {
       expect(loadConfig(env)).toEqual({
         apiKey: '',
-        baseUrl: 'https://htmlradar.com',
+        baseUrl: '',
         keyProblem: NO_API_KEY_MESSAGE,
       });
     }
@@ -102,16 +105,30 @@ describe('loadConfig', () => {
   // to send rather than refuse locally.
   it('accepts an hr_test_ key as plausible', () => {
     const testKey = 'hr_test_' + '0123456789abcdef0123456789abcdef01234567';
-    expect(loadConfig({ HTMLRADAR_API_KEY: testKey })).toEqual({
+    expect(loadConfig({ HTMLRADAR_API_KEY: testKey, HTMLRADAR_API_URL: SELF_HOSTED })).toEqual({
       apiKey: testKey,
-      baseUrl: 'https://htmlradar.com',
+      baseUrl: SELF_HOSTED,
     });
   });
 
-  it('accepts a well-formed key, defaults to the hosted API and strips trailing slashes', () => {
-    expect(loadConfig({ HTMLRADAR_API_KEY: ` ${wellFormedKey} ` })).toEqual({
+  it('requires HTMLRADAR_API_URL: there is no default to send a key to', () => {
+    expect(loadConfig({ HTMLRADAR_API_KEY: wellFormedKey })).toEqual({
+      apiKey: '',
+      baseUrl: '',
+      keyProblem: NO_API_URL_MESSAGE,
+    });
+    expect(
+      loadConfig({ HTMLRADAR_API_KEY: wellFormedKey, HTMLRADAR_API_URL: 'radar.example.com' })
+        .keyProblem,
+    ).toBe(BAD_API_URL_MESSAGE);
+  });
+
+  it('accepts a well-formed key and strips trailing slashes', () => {
+    expect(
+      loadConfig({ HTMLRADAR_API_KEY: ` ${wellFormedKey} `, HTMLRADAR_API_URL: SELF_HOSTED }),
+    ).toEqual({
       apiKey: wellFormedKey,
-      baseUrl: 'https://htmlradar.com',
+      baseUrl: SELF_HOSTED,
     });
     expect(
       loadConfig({

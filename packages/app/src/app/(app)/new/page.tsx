@@ -9,7 +9,7 @@
 // uploading is unrestricted.
 
 import { SectionMark } from '@/components/SectionMark';
-import { requireUser } from '@/lib/supabase-server';
+import { requireUser } from '@/lib/auth';
 import { createDocument } from './actions';
 import { NewDocumentForm } from './NewDocumentForm';
 import { parseNewDocumentMode } from '@/lib/new-document-mode';

@@ -1,89 +1,76 @@
-// The one e-mail this worker sends: the verified e-mail gate's code.
+// Outgoing messages: the verified gate's code, and the first-read alert to the
+// sender (e-mail, plus Telegram when the sender has a chat id and the bot token
+// is set). E-mail goes through the Cloudflare Email Service binding `EMAIL`.
 //
-// PLAIN, AND WITH NO LINK THAT OPENS THE DOCUMENT (decision 3 and 8 of
-// docs/workstreams/security/VERIFIED-EMAIL-GATE-BRIEF-2026-09-21.md). That is
-// not a style preference, it is the lesson of 21 September 2026: corporate
-// mail security opens every link in a message before the human does, and a
-// Microsoft Defender scanner spent three of one customer's sign-in links
-// thirteen to sixteen seconds after each was sent. A six-digit number a person
-// types cannot be spent by a machine that follows links, and the machine that
-// renders this message finds nothing in it to follow.
-//
-// No tracking pixel and no marketing, for the same reason the gate pages carry
-// no third-party anything: this message goes to somebody who has no
-// relationship with us and did not ask to hear from us.
-//
-// The HOST the reader is on is named in the body (item G), because a customer's
-// own domain and a handle host are both addresses the reader may be looking at,
-// and a code that names the wrong one reads like a phishing attempt.
+// THE CODE MESSAGE CARRIES NO LINK THAT OPENS THE DOCUMENT. Corporate mail
+// scanners open every link in a message before the human does; a six-digit
+// number a person types cannot be spent by a machine that follows links.
+// No tracking pixel and no marketing in anything sent to a recipient.
 
 import type { Env } from './env.js';
+import type { FirstReadAlert } from './store.js';
+import { recordNotification } from './store.js';
 import { escapeHtml } from './escape.js';
 
-const RESEND_DEFAULT_URL = 'https://api.resend.com/emails';
+const DEFAULT_FROM = 'docs@hive.land';
+export const brandOf = (env: Env): string => env.BRAND_NAME || 'Hivemarket';
 
-// The address the product already sends everything else from — the value of the
-// `resend_from` Vault secret the first-open e-mail, the onboarding e-mail and
-// the abuse notice all read (schema/049, 048, 037).
-//
-// It is a DEFAULT rather than a required secret so that the gate needs exactly
-// one new credential and not two. A deploy that forgets RESEND_FROM sends from
-// the right address anyway; a deploy that forgets RESEND_API_KEY cannot send at
-// all, which is why that one is checked and refused in the workflow rather than
-// defaulted here. Overriding it is for a self-hosted install or a change of
-// sending address, and `wrangler secret put RESEND_FROM` is all that takes.
-const RESEND_DEFAULT_FROM = 'HTMLRadar <hello@htmlradar.com>';
+interface Outgoing {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/** True only when the binding accepted the message. Never throws. */
+export async function sendMail(env: Env, m: Outgoing): Promise<boolean> {
+  if (!env.EMAIL) return false;
+  try {
+    await env.EMAIL.send({
+      to: m.to,
+      from: { email: env.MAIL_FROM || DEFAULT_FROM, name: brandOf(env) },
+      subject: m.subject,
+      html: m.html,
+      text: m.text,
+    });
+    return true;
+  } catch (err) {
+    console.error('mail send failed', err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------- the code
 
 export interface CodeMail {
   to: string;
   code: string;
   documentTitle: string;
-  /** The owner's display name, or their address, exactly as the product shows it elsewhere. */
+  /** The owner's display name, or their address. */
   sender: string;
   /** The hostname this reader is on. */
   host: string;
 }
 
-/**
- * Sends the code. Returns true only when the provider accepted the message.
- *
- * Every failure is false and nothing else: no throw, and no distinction
- * between "no credential configured", "the provider said no" and "the request
- * never arrived". The reader is never told about any of them — since the send
- * was decoupled from the reply, they always see the same neutral page — and
- * the caller records the reason where the people who can fix it will see it.
- */
 export async function sendVerificationCode(env: Env, mail: CodeMail): Promise<boolean> {
-  if (!env.RESEND_API_KEY) return false;
-
   const subject = `Your code for ${mail.documentTitle}`;
-  const body = {
-    from: env.RESEND_FROM ?? RESEND_DEFAULT_FROM,
-    to: [mail.to],
+  return sendMail(env, {
+    to: mail.to,
     subject,
-    text: plainText(mail),
-    html: html(mail, subject),
-  };
-
-  try {
-    const res = await fetch(env.RESEND_API_URL ?? RESEND_DEFAULT_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+    text: codeText(mail),
+    html: layout(
+      subject,
+      `<p style="${P}">${escapeHtml(mail.sender)} shared &ldquo;${escapeHtml(mail.documentTitle)}&rdquo; with you on ${escapeHtml(mail.host)}.</p>
+       <div style="font-family:ui-monospace,Menlo,monospace;font-size:34px;letter-spacing:0.22em;font-weight:600;margin:0 0 20px;">${escapeHtml(mail.code)}</div>
+       <p style="${P}">It works for ten minutes, once.</p>
+       <p style="${MUTED}">If you were not expecting this, ignore it. Nothing opens without the code.</p>`,
+    ),
+  });
 }
 
-// Both parts say the same thing in the same order, so a client that shows
-// either one shows the whole message. The code is on its own line with nothing
-// beside it, which is what makes it selectable on a phone.
-const plainText = (m: CodeMail): string =>
+// Both parts say the same thing in the same order. The code is on its own line
+// with nothing beside it, which is what makes it selectable on a phone.
+const codeText = (m: CodeMail): string =>
   [
     `${m.sender} shared "${m.documentTitle}" with you on ${m.host}.`,
     '',
@@ -96,33 +83,114 @@ const plainText = (m: CodeMail): string =>
     'If you were not expecting this, ignore it. Nothing opens without the code.',
   ].join('\n');
 
-const html = (m: CodeMail, subject: string): string =>
-  `<!doctype html>
+// ---------------------------------------------------------------- first read
+
+/** Who read it, in one line: "anna@acme.com (Berlin, DE · desktop)". */
+export function readerLine(a: FirstReadAlert): string {
+  const who = a.viewerEmail ?? a.recipientLabel ?? 'Someone with the link';
+  const where = [a.viewerCity, a.viewerCountry].filter(Boolean).join(', ');
+  const extra = [where, a.viewerDevice].filter(Boolean).join(' · ');
+  return extra ? `${who} (${extra})` : who;
+}
+
+export function firstReadMessage(env: Env, a: FirstReadAlert): Outgoing & { telegram: string } {
+  const who = readerLine(a);
+  const label = a.recipientLabel && a.viewerEmail ? ` — link for ${a.recipientLabel}` : '';
+  const dashboard = env.APP_ORIGIN
+    ? `${env.APP_ORIGIN.replace(/\/+$/, '')}/docs/${a.documentId}`
+    : null;
+  const subject = `${a.viewerEmail ?? a.recipientLabel ?? 'Someone'} is reading ${a.documentTitle}`;
+  const text = [
+    `${who} started reading "${a.documentTitle}"${label}.`,
+    a.referrer ? `Came from: ${a.referrer}` : '',
+    '',
+    dashboard ? `Time per slide and return visits: ${dashboard}` : '',
+  ]
+    .filter((l, i, all) => l !== '' || (i > 0 && all[i - 1] !== ''))
+    .join('\n')
+    .trim();
+  const html = layout(
+    subject,
+    `<p style="${P}"><strong>${escapeHtml(who)}</strong> started reading &ldquo;${escapeHtml(a.documentTitle)}&rdquo;${escapeHtml(label)}.</p>
+     ${a.referrer ? `<p style="${MUTED}">Came from: ${escapeHtml(a.referrer)}</p>` : ''}
+     ${dashboard ? `<p style="${P}"><a href="${escapeHtml(dashboard)}" style="color:#7A1F2E;">Time per slide and return visits &rarr;</a></p>` : ''}
+     <p style="${MUTED}">Sent once per reader per document. Turn it off per link in the dashboard.</p>`,
+  );
+  const telegram = [`📖 ${who} started reading "${a.documentTitle}"${label}.`, dashboard ?? '']
+    .filter(Boolean)
+    .join('\n');
+  return { to: a.ownerEmail, subject, text, html, telegram };
+}
+
+export async function sendTelegram(env: Env, chatId: string, text: string): Promise<boolean> {
+  if (!env.TELEGRAM_BOT_TOKEN) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sends the first-read alert on every configured channel and logs each attempt
+ * to notifications_log. Runs inside ctx.waitUntil; never throws.
+ */
+export async function sendFirstReadAlert(env: Env, alert: FirstReadAlert): Promise<void> {
+  const msg = firstReadMessage(env, alert);
+  const jobs: Promise<void>[] = [
+    (async () => {
+      const ok = await sendMail(env, msg);
+      await recordNotification(
+        env,
+        alert.sessionId,
+        'email',
+        alert.ownerEmail,
+        ok ? 'delivered' : 'failed',
+        ok ? null : env.EMAIL ? 'send refused' : 'no EMAIL binding',
+      );
+    })(),
+  ];
+  if (alert.telegramChatId && env.TELEGRAM_BOT_TOKEN) {
+    const chatId = alert.telegramChatId;
+    jobs.push(
+      (async () => {
+        const ok = await sendTelegram(env, chatId, msg.telegram);
+        await recordNotification(
+          env,
+          alert.sessionId,
+          'telegram',
+          chatId,
+          ok ? 'delivered' : 'failed',
+          ok ? null : 'telegram refused',
+        );
+      })(),
+    );
+  }
+  const results = await Promise.allSettled(jobs);
+  for (const r of results) {
+    if (r.status === 'rejected') console.error('first-read alert log failed', r.reason);
+  }
+}
+
+// ---------------------------------------------------------------- layout
+
+const P = 'margin:0 0 16px;font-size:15px;line-height:1.55;color:#3A2818;';
+const MUTED =
+  'margin:20px 0 0;padding-top:16px;border-top:1px solid #E8D5BD;font-size:13px;line-height:1.55;color:#876959;';
+
+const layout = (title: string, inner: string): string => `<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(subject)}</title>
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head>
 <body style="margin:0;padding:0;background:#FBF1E8;font-family:-apple-system,BlinkMacSystemFont,'Inter',system-ui,'Segoe UI',Roboto,sans-serif;color:#1F1108;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FBF1E8;">
-  <tr><td align="center" style="padding:48px 16px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="420" style="max-width:420px;">
-      <tr><td style="padding:0 8px 28px 8px;">
-        <span style="font-family:'JetBrains Mono','SF Mono',Menlo,monospace;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#5A1521;font-weight:600;">HTML<span style="color:#7A1F2E;font-style:italic;font-weight:500;">Radar</span></span>
-      </td></tr>
-      <tr><td style="padding:0 8px 20px 8px;font-size:15px;line-height:1.55;color:#3A2818;">
-        ${escapeHtml(m.sender)} shared &ldquo;${escapeHtml(m.documentTitle)}&rdquo; with you on ${escapeHtml(m.host)}.
-      </td></tr>
-      <tr><td style="padding:0 8px 20px 8px;">
-        <div style="font-family:'JetBrains Mono','SF Mono',Menlo,monospace;font-size:34px;letter-spacing:0.22em;color:#1F1108;font-weight:600;">${escapeHtml(m.code)}</div>
-      </td></tr>
-      <tr><td style="padding:0 8px 24px 8px;font-size:14px;line-height:1.55;color:#3A2818;">
-        It works for ten minutes, once.
-      </td></tr>
-      <tr><td style="padding:20px 8px 0 8px;border-top:1px solid #E8D5BD;font-size:13px;line-height:1.55;color:#876959;">
-        If you were not expecting this, ignore it. Nothing opens without the code.
-      </td></tr>
+  <tr><td align="center" style="padding:40px 16px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="440" style="max-width:440px;">
+      <tr><td style="padding:0 8px;">${inner}</td></tr>
     </table>
   </td></tr>
 </table>

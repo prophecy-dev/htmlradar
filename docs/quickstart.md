@@ -1,3 +1,8 @@
+> **Somnia internal fork.** This page is upstream's and describes the Supabase/Resend build.
+> This fork runs on D1 + Cloudflare Email Service behind Cloudflare Access — setup, env and
+> deploy are in [`INTERNAL.md`](../INTERNAL.md); per-package env is in `packages/app/.env.example`
+> and `packages/proxy/wrangler.jsonc`.
+
 # Quickstart
 
 The hosted version at [htmlradar.com](https://htmlradar.com) is the fastest path. This guide is for developers who want to run HTMLRadar themselves.

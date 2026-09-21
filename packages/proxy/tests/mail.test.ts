@@ -1,93 +1,170 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendVerificationCode } from '../src/mail.js';
 import type { Env } from '../src/env.js';
+import type { FirstReadAlert } from '../src/store.js';
 
-// The code message. Mocked away in verified-gate.test.ts, which is about what
-// the READER sees; this is about what leaves the worker.
-//
-// The one rule worth a test of its own is decision 3: the message carries no
-// link that opens the document, because corporate mail security opens every
-// link in a message before the human does. A future edit that adds a helpful
-// "open the document" button would sail through every other test in this
-// package and quietly undo the reason the gate uses a number at all.
+// What leaves the worker: the code message (Cloudflare Email Service binding)
+// and the first-read alert (e-mail plus Telegram), with every attempt logged.
 
-const env = (over: Partial<Env> = {}) =>
-  ({
-    RESEND_API_KEY: 'test-key',
-    RESEND_FROM: 'HTMLRadar <hello@htmlradar.com>',
-    ...over,
-  }) as unknown as Env;
+const recordNotification = vi.fn(async (..._args: unknown[]) => undefined);
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
+  return { ...actual, recordNotification: (...a: unknown[]) => recordNotification(...a) };
+});
+
+const { sendVerificationCode, sendFirstReadAlert, firstReadMessage } =
+  await import('../src/mail.js');
+
+type Sent = {
+  to: string;
+  from: { email: string; name?: string };
+  subject: string;
+  html: string;
+  text: string;
+};
+
+function emailBinding(fail = false) {
+  const sent: Sent[] = [];
+  return {
+    sent,
+    binding: {
+      send: vi.fn(async (m: Sent) => {
+        if (fail) throw new Error('E_SENDER_NOT_VERIFIED');
+        sent.push(m);
+        return { messageId: 'm1' };
+      }),
+    },
+  };
+}
+
+const env = (over: Partial<Env> = {}): Env =>
+  ({ MAIL_FROM: 'docs@hive.land', BRAND_NAME: 'Hivemarket', ...over }) as unknown as Env;
 
 const mail = {
   to: 'buyer@example.test',
   code: '314159',
   documentTitle: 'The Q3 Proposal',
   sender: 'Dana Sender',
-  host: 'decks.acme.test',
+  host: 'docs.hive.land',
 };
 
-function capture(status = 200) {
-  return vi
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValue(new Response(JSON.stringify({ id: 'x' }), { status }));
-}
+const alert: FirstReadAlert = {
+  sessionId: 'sess-1',
+  documentId: 'doc-1',
+  ownerEmail: 'sam@hive.land',
+  ownerName: 'Sam',
+  ownerTimezone: 'UTC',
+  telegramChatId: '4242',
+  documentTitle: 'AI sales deck',
+  slug: 'acme',
+  recipientLabel: 'Acme — CTO',
+  viewerEmail: 'cto@acme.com',
+  viewerCountry: 'DE',
+  viewerCity: 'Berlin',
+  viewerDevice: 'desktop',
+  referrer: null,
+};
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  recordNotification.mockClear();
+});
 
 describe('the verification code message', () => {
-  it('carries no link at all', async () => {
-    const spy = capture();
-    await sendVerificationCode(env(), mail);
-    const body = JSON.parse(String((spy.mock.calls[0]![1] as RequestInit).body));
-    expect(body.text).not.toMatch(/https?:\/\//);
-    expect(body.html).not.toMatch(/<a\b/i);
-    expect(body.html).not.toMatch(/https?:\/\//);
-    // And nothing that loads on open, which is the other half of "plain".
-    expect(body.html).not.toMatch(/<img\b/i);
+  it('goes through the EMAIL binding from MAIL_FROM, in html and text', async () => {
+    const { sent, binding } = emailBinding();
+    expect(await sendVerificationCode(env({ EMAIL: binding }), mail)).toBe(true);
+    expect(sent).toHaveLength(1);
+    const m = sent[0]!;
+    expect(m.to).toBe('buyer@example.test');
+    expect(m.from).toEqual({ email: 'docs@hive.land', name: 'Hivemarket' });
+    expect(m.subject).toContain('The Q3 Proposal');
+    expect(m.text).toContain('314159');
+    expect(m.html).toContain('314159');
+    expect(m.text).toContain('Dana Sender');
+    expect(m.text).toContain('docs.hive.land');
   });
 
-  it('names the document, the sender and the host the reader is on', async () => {
-    const spy = capture();
-    await sendVerificationCode(env(), mail);
-    const body = JSON.parse(String((spy.mock.calls[0]![1] as RequestInit).body));
-    expect(body.subject).toContain('The Q3 Proposal');
-    expect(body.text).toContain('Dana Sender');
-    // Item G: a custom domain names itself, so the message does not read like
-    // a forgery to somebody looking at decks.acme.test in their address bar.
-    expect(body.text).toContain('decks.acme.test');
-    expect(body.text).toContain('314159');
-    expect(body.html).toContain('314159');
-    expect(body.to).toEqual(['buyer@example.test']);
+  // Corporate mail security opens every link in a message before the human
+  // does; a number a person types cannot be spent by a link-following scanner.
+  it('carries no link and nothing that loads on open', async () => {
+    const { sent, binding } = emailBinding();
+    await sendVerificationCode(env({ EMAIL: binding }), mail);
+    const m = sent[0]!;
+    expect(m.text).not.toMatch(/https?:\/\//);
+    expect(m.html).not.toMatch(/<a\b/i);
+    expect(m.html).not.toMatch(/https?:\/\//);
+    expect(m.html).not.toMatch(/<img\b/i);
   });
 
   it('escapes what it is given, so a document title cannot inject markup', async () => {
-    const spy = capture();
-    await sendVerificationCode(env(), { ...mail, documentTitle: '<img src=x onerror=1>' });
-    const body = JSON.parse(String((spy.mock.calls[0]![1] as RequestInit).body));
-    expect(body.html).not.toContain('<img src=x');
-    expect(body.html).toContain('&lt;img');
-  });
-
-  it('falls back to the address the product already sends from', async () => {
-    const spy = capture();
-    // Only RESEND_API_KEY is genuinely required; forgetting RESEND_FROM must
-    // send from the right place rather than not send at all.
-    await sendVerificationCode(env({ RESEND_FROM: undefined }), mail);
-    const body = JSON.parse(String((spy.mock.calls[0]![1] as RequestInit).body));
-    expect(body.from).toBe('HTMLRadar <hello@htmlradar.com>');
+    const { sent, binding } = emailBinding();
+    await sendVerificationCode(env({ EMAIL: binding }), {
+      ...mail,
+      documentTitle: '<img src=x onerror=1>',
+    });
+    expect(sent[0]!.html).not.toContain('<img src=x');
+    expect(sent[0]!.html).toContain('&lt;img');
   });
 
   it('reports failure rather than throwing', async () => {
-    expect(await sendVerificationCode(env({ RESEND_API_KEY: undefined }), mail)).toBe(false);
-    capture(429);
     expect(await sendVerificationCode(env(), mail)).toBe(false);
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
-    expect(await sendVerificationCode(env(), mail)).toBe(false);
+    const { binding } = emailBinding(true);
+    expect(await sendVerificationCode(env({ EMAIL: binding }), mail)).toBe(false);
+  });
+});
+
+describe('the first-read alert', () => {
+  it('names the reader, where they are, the document and the link it was sent on', () => {
+    const m = firstReadMessage(env({ APP_ORIGIN: 'https://radar.example' }), alert);
+    expect(m.to).toBe('sam@hive.land');
+    expect(m.subject).toBe('cto@acme.com is reading AI sales deck');
+    expect(m.text).toContain('cto@acme.com (Berlin, DE · desktop)');
+    expect(m.text).toContain('link for Acme — CTO');
+    expect(m.text).toContain('https://radar.example/docs/doc-1');
+    expect(m.html).toContain('https://radar.example/docs/doc-1');
+    expect(m.telegram).toContain('cto@acme.com');
   });
 
-  it('sends nowhere when there is no credential', async () => {
-    const spy = capture();
-    await sendVerificationCode(env({ RESEND_API_KEY: undefined }), mail);
-    expect(spy).not.toHaveBeenCalled();
+  it('carries no dashboard link when APP_ORIGIN is unset', () => {
+    const m = firstReadMessage(env(), alert);
+    expect(m.text).not.toMatch(/https?:\/\//);
+  });
+
+  it('sends e-mail and Telegram, and logs each as delivered', async () => {
+    const { sent, binding } = emailBinding();
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    await sendFirstReadAlert(env({ EMAIL: binding, TELEGRAM_BOT_TOKEN: 'bot-token' }), alert);
+
+    expect(sent).toHaveLength(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.telegram.org/botbot-token/sendMessage');
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body.chat_id).toBe('4242');
+    expect(body.text).toContain('AI sales deck');
+
+    const logged = recordNotification.mock.calls.map((c) => [c[2], c[3], c[4]]);
+    expect(logged).toEqual(
+      expect.arrayContaining([
+        ['email', 'sam@hive.land', 'delivered'],
+        ['telegram', '4242', 'delivered'],
+      ]),
+    );
+  });
+
+  it('skips Telegram without a bot token or a chat id, and logs a failed send', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { binding } = emailBinding(true);
+    await sendFirstReadAlert(env({ EMAIL: binding }), alert);
+    await sendFirstReadAlert(env({ EMAIL: binding, TELEGRAM_BOT_TOKEN: 't' }), {
+      ...alert,
+      telegramChatId: null,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(recordNotification.mock.calls.map((c) => [c[2], c[4]])).toEqual([
+      ['email', 'failed'],
+      ['email', 'failed'],
+    ]);
   });
 });

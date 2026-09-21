@@ -1,25 +1,26 @@
-// /docs/[id]/v2 — Three-tab document view (Sharing / Analytics / Versions).
+// /docs/[id] — Three-tab document view (Sharing / Analytics / Versions), with
+// the document-level attachments and link preview below the tabs.
 //
-// PARALLEL ROUTE under /docs/[id]/v2 — the existing /docs/[id] page is
-// untouched. Stage A: header + sticky tab bar with URL state and
-// placeholder tab content. The placeholders show real counts so the
-// preview looks intentional rather than half-finished.
-//
-// Stage B fills in the Sharing tab (DocumentShareManager + attachments
-// inline inside share cards). Stage C fills in Analytics + Versions.
-// Heavier data shapes (analyticsByShareId, sectionMap roll-ups) are NOT
-// computed in Stage A — adding them now would pay edge cold-start cost
-// for nothing. They come back when their tab needs them.
-//
-// Layout note: AppLayout already wraps in `px-6 py-8`, so this page
-// uses `pb-16` only to add bottom breathing room without double-padding
-// the top.
+// Every read goes through packages/db/src/owner.ts, scoped to the signed-in
+// owner; analytics are read with owner-scoped joins rather than IN lists, so
+// a document with many sessions never hits D1's bound-parameter limit.
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ChevronRight, FileText, Link2 } from 'lucide-react';
-import { requireUser, serverClient } from '@/lib/supabase-server';
-import { logServerError } from '@/lib/error-log';
+import {
+  getDocument,
+  listAttachments,
+  listEmailVerifications,
+  listSectionEvents,
+  listSessions,
+  listSharesForDocument,
+  listVersions,
+  listViewers,
+  touchDocumentViewed,
+} from '@htmlradar/db/owner';
+import { requireUser } from '@/lib/auth';
+import { db } from '@/lib/cf';
 import { Chip } from '@/components/doc-dashboard/Chip';
 import {
   previewDocumentAction,
@@ -32,6 +33,7 @@ import {
   uploadAttachmentsAction,
   deleteAttachmentAction,
   toggleViewerInternalAction,
+  updateLinkPreviewAction,
 } from '../actions';
 import { AttachmentsPanel, type AttachmentRow } from '../AttachmentsPanel';
 import type { SectionTotal } from './SectionTimeBarChart';
@@ -42,18 +44,11 @@ import { LiveRefresh } from '../LiveRefresh';
 import { VersionHistoryPopover, type DocumentVersionRow } from '../VersionHistoryPopover';
 import { DocTabsClient } from './DocTabsClient';
 import { normalizeTab, type TabKey } from './tab-key';
-import { type ShareRow, type ShareAnalyticsData } from '../DocumentShareManager';
+import { type ShareRow, type ShareAnalyticsData } from '../share-types';
+import { LinkPreviewForm } from '../LinkPreviewForm';
 import type { Viewer, Session, SectionEvent } from '@/lib/types';
 import { isMetaSectionTitle } from '@/lib/section-filter';
 import { countDistinctViewers } from '@/lib/viewer-metrics';
-import { readQuota } from '@/lib/quota';
-import {
-  customDomainStateOf,
-  customHostnameOf,
-  defaultDomainForNewShare,
-} from '@/lib/custom-domains';
-import { serviceClient } from '@/lib/api-auth';
-
 export const runtime = 'edge';
 
 export default async function DocumentPageV2(props: {
@@ -70,24 +65,10 @@ export default async function DocumentPageV2(props: {
     edited?: string;
     share_deleted?: string;
     share_kept?: string;
+    preview_saved?: string;
   };
 }) {
-  // Wrap the entire render so any exception lands in app_error_log
-  // with the document id + stage marker — otherwise the user just
-  // sees error.tsx with a hash and we have no idea what broke.
-  try {
-    return await renderV2(props);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'unknown';
-    const stack = e instanceof Error ? e.stack?.slice(0, 1500) : null;
-    await logServerError({
-      source: 'docs.v2.render',
-      message: msg,
-      route: `/docs/${props.params.id}/v2`,
-      context: { stack, stage: 'A' },
-    });
-    throw e; // re-throw so Next.js renders error.tsx as before
-  }
+  return renderV2(props);
 }
 
 async function renderV2({
@@ -106,184 +87,106 @@ async function renderV2({
     hide_error?: string;
     edited?: string;
     share_deleted?: string;
+    share_kept?: string;
+    preview_saved?: string;
   };
 }) {
   const user = await requireUser();
-  const supabase = serverClient();
-
-  // Free-tier link-cap state for the share-creation gate (pricing v4). null for
-  // pro (unlimited); { used, cap } for free, counted lifetime by owner.
-  const quota = await readQuota(supabase, user.id);
-  const freeShareCap = quota.tier === 'free' ? { used: quota.used, cap: quota.cap } : null;
-
-  // The domain a new link goes on unless the customer picks the HTMLRadar
-  // address on the form. Null while the feature is off, so the create form
-  // shows no choice at all and nothing about link creation changes.
-  const defaultDomain = await defaultDomainForNewShare(serviceClient(), user.id);
+  const d = db();
 
   const banners = collectBanners(searchParams ?? {});
   const initialTab: TabKey = normalizeTab(searchParams?.tab);
 
-  const { data: doc } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('id', params.id)
-    .is('deleted_at', null)
-    .single();
+  const doc = await getDocument(d, user.id, params.id);
   if (!doc) notFound();
 
-  // Mark "new activity since last visit" cleared on /docs list.
-  await supabase
-    .from('documents')
-    .update({ last_viewed_by_owner_at: new Date().toISOString() })
-    .eq('id', params.id)
-    .eq('owner_id', doc.owner_id);
+  // Clears the "new activity since last visit" marker on /docs.
+  await touchDocumentViewed(d, user.id, doc.id);
 
-  // Stage A only needs: share count, version count, viewer count, plus
-  // booleans for empty-state branching, plus the liveReaders chip. The
-  // full analytics pipeline (analyticsByShareId, per-section roll-ups)
-  // is deferred to Stage C when its tab needs it.
-  // Full share row fetch so the Sharing tab can render cards with all
-  // settings + analytics roll-ups; same shape the live page uses.
-  const [sharesRes, versionsRes, attachmentsRes] = await Promise.all([
-    supabase
-      .from('document_shares')
-      .select('*, custom_domain_id, custom_domains(hostname, state)')
-      .eq('document_id', params.id)
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('document_versions')
-      .select('id, version, filename, bytes, source_type, source_url, replaced_at')
-      .eq('document_id', params.id)
-      .order('version', { ascending: false }),
-    supabase
-      .from('document_attachments')
-      .select('id, filename, mime_type, size_bytes, created_at')
-      .eq('document_id', params.id)
-      .order('created_at', { ascending: true }),
-  ]);
-  const rawShares = sharesRes.data ?? [];
-  const shareIds = rawShares.map((s) => s.id);
-  const versions: DocumentVersionRow[] = (versionsRes.data ?? []) as DocumentVersionRow[];
-  const attachments: AttachmentRow[] = (attachmentsRes.data ?? []) as AttachmentRow[];
-
-  // Full data fetch (viewers/sessions/section events) — same Promise.all
-  // pattern as live page. Used by ShareRow analytics + the live-readers
-  // chip + the per-share viewer counts that show on each card.
-  let viewerCount = 0;
-  let hasOpens = false;
-  let liveReaders = 0;
-  let allViewers: Viewer[] = [];
-  let allSessions: Session[] = [];
-  let allEvents: SectionEvent[] = [];
-  let visibleSessions: Session[] = [];
-  // The READS that proved themselves through the verified e-mail gate
-  // (schema/055), as viewer ids.
-  //
-  // Ids and not addresses. A verification belongs to one link — the table is
-  // keyed `(share_id, email)` — and an address is not a proof of anything on a
-  // link where nobody was asked for a code. Collecting addresses across the
-  // document made somebody who typed the same address on an ordinary sibling
-  // link inherit the mark, which is the opposite of what the mark is for.
-  //
-  // Row-level security scopes this to links this account owns, so the read
-  // needs no owner filter of its own.
-  let verifiedViewerIds: string[] = [];
-  if (shareIds.length) {
-    const [viewersRes, sessionsRes, verifiedRes] = await Promise.all([
-      supabase.from('viewers').select('*').in('share_id', shareIds),
-      supabase
-        .from('sessions')
-        .select('*')
-        .in('share_id', shareIds)
-        .order('started_at', { ascending: false }),
-      supabase.from('share_email_verifications').select('share_id, email').in('share_id', shareIds),
+  const scope = { documentId: doc.id };
+  const [rawShares, versionRows, attachmentRows, allViewers, allSessions, rawEvents, verified] =
+    await Promise.all([
+      listSharesForDocument(d, user.id, doc.id),
+      listVersions(d, user.id, doc.id),
+      listAttachments(d, user.id, doc.id),
+      listViewers(d, user.id, scope),
+      listSessions(d, user.id, scope),
+      listSectionEvents(d, user.id, scope),
+      listEmailVerifications(d, user.id, scope),
     ]);
-    allViewers = (viewersRes.data ?? []) as Viewer[];
-    allSessions = (sessionsRes.data ?? []) as Session[];
-    // A viewer is verified when the code was proved on THAT viewer's own link
-    // at THAT viewer's own address, so the pair is what is matched.
-    const verifiedPairs = new Set(
-      ((verifiedRes.data ?? []) as Array<{ share_id: string; email: string }>).map(
-        (r) => `${r.share_id}|${r.email.trim().toLowerCase()}`,
+  const shareIds = rawShares.map((s) => s.id);
+  const versions: DocumentVersionRow[] = versionRows as DocumentVersionRow[];
+  const attachments: AttachmentRow[] = attachmentRows.map((a) => ({
+    id: a.id,
+    filename: a.filename,
+    mime_type: a.mime_type,
+    size_bytes: a.size_bytes,
+    created_at: a.created_at,
+  }));
+  const allEvents: SectionEvent[] = rawEvents.filter(
+    (e) => !isMetaSectionTitle(e.section_title, e.section_id),
+  );
+
+  // A viewer is verified when the code was proved on THAT viewer's own link at
+  // THAT viewer's own address — a verification belongs to one link.
+  const verifiedPairs = new Set(
+    verified.map((r) => `${r.share_id}|${r.email.trim().toLowerCase()}`),
+  );
+  const verifiedViewerIds = allViewers
+    .filter(
+      (v) => v.email?.trim() && verifiedPairs.has(`${v.share_id}|${v.email.trim().toLowerCase()}`),
+    )
+    .map((v) => v.id);
+
+  const internalViewerIds = new Set(allViewers.filter((v) => v.is_internal).map((v) => v.id));
+  const visibleViewers = allViewers.filter((v) => !internalViewerIds.has(v.id));
+  const visibleSessions: Session[] = allSessions.filter(
+    (s) =>
+      !internalViewerIds.has(s.viewer_id) &&
+      !(
+        s.bounced === true &&
+        (s.active_time_seconds ?? 0) === 0 &&
+        (s.max_scroll_depth ?? 0) === 0
       ),
-    );
-    verifiedViewerIds = allViewers
-      .filter(
-        (v) =>
-          v.email?.trim() && verifiedPairs.has(`${v.share_id}|${v.email.trim().toLowerCase()}`),
-      )
-      .map((v) => v.id);
+  );
+  const viewerCount = countDistinctViewers(visibleViewers);
+  const hasOpens = visibleSessions.length > 0;
 
-    const sessionIds = allSessions.map((s) => s.id);
-    const eventsRes = sessionIds.length
-      ? await supabase
-          .from('section_events')
-          .select('section_id, section_title, time_seconds, session_id, ordinal')
-          .in('session_id', sessionIds)
-      : { data: [] as SectionEvent[] };
-    allEvents = ((eventsRes.data ?? []) as SectionEvent[]).filter(
-      (e) => !isMetaSectionTitle(e.section_title, e.section_id),
-    );
-
-    const internalViewerIds = new Set(allViewers.filter((v) => v.is_internal).map((v) => v.id));
-    const visibleViewers = allViewers.filter((v) => !internalViewerIds.has(v.id));
-    visibleSessions = allSessions.filter(
-      (s) =>
-        !internalViewerIds.has(s.viewer_id) &&
-        !(
-          s.bounced === true &&
-          (s.active_time_seconds ?? 0) === 0 &&
-          (s.max_scroll_depth ?? 0) === 0
-        ),
-    );
-
-    viewerCount = countDistinctViewers(visibleViewers);
-    hasOpens = visibleSessions.length > 0;
-
-    const now = Date.now();
-    const live = allSessions.filter((s) => {
-      const hb = s.last_heartbeat_at ? new Date(s.last_heartbeat_at).getTime() : 0;
-      return hb > 0 && now - hb < 60_000;
-    });
-    const viewersById = new Map(allViewers.map((v) => [v.id, v]));
-    const keys = new Set<string>();
-    for (const s of live) {
-      const v = viewersById.get(s.viewer_id);
-      keys.add(v?.email?.trim().toLowerCase() || s.viewer_id);
+  const now = Date.now();
+  const viewersById = new Map(allViewers.map((v) => [v.id, v]));
+  const liveKeys = new Set<string>();
+  for (const s of allSessions) {
+    const hb = s.last_heartbeat_at ? new Date(s.last_heartbeat_at).getTime() : 0;
+    if (hb > 0 && now - hb < 60_000) {
+      liveKeys.add(viewersById.get(s.viewer_id)?.email?.trim().toLowerCase() || s.viewer_id);
     }
-    liveReaders = keys.size;
   }
+  const liveReaders = liveKeys.size;
 
-  // Build shares + analyticsByShareId — same shape DocumentShareManager
-  // uses on the live page, kept identical so ShareCardList stays a pure
-  // visual swap with zero server-side behaviour change.
   const sessionToShare = new Map<string, string>(visibleSessions.map((s) => [s.id, s.share_id]));
   const sessionsByShare: Record<string, Session[]> = {};
   for (const s of visibleSessions) {
     (sessionsByShare[s.share_id] ??= []).push(s);
   }
   const viewersByShare: Record<string, Viewer[]> = {};
-  for (const v of allViewers) {
-    if (!v.is_internal) (viewersByShare[v.share_id] ??= []).push(v);
+  for (const v of visibleViewers) {
+    (viewersByShare[v.share_id] ??= []).push(v);
   }
 
   const shares: ShareRow[] = rawShares.map((s) => ({
     id: s.id,
     slug: s.slug,
+    slug_is_custom: s.slug_is_custom,
     recipient_label: s.recipient_label,
     require_email: s.require_email,
-    verify_email: Boolean(s.verify_email),
+    verify_email: s.verify_email,
     require_password: s.require_password,
-    allowed_email_domains: (s.allowed_email_domains as string[] | null) ?? null,
-    allowed_emails: (s.allowed_emails as string[] | null) ?? null,
-    lock_deck: Boolean(s.lock_deck ?? true),
+    allowed_email_domains: s.allowed_email_domains,
+    allowed_emails: s.allowed_emails,
+    lock_deck: s.lock_deck,
+    notify_first_open: s.notify_first_open,
     expires_at: s.expires_at,
     revoked_at: s.revoked_at,
-    host_handle: (s.host_handle as string | null) ?? null,
-    custom_hostname: customHostnameOf(s),
-    custom_domain_id: (s.custom_domain_id as string | null) ?? null,
-    custom_domain_state: customDomainStateOf(s),
     viewCount: sessionsByShare[s.id]?.length ?? 0,
   }));
 
@@ -507,8 +410,6 @@ async function renderV2({
         analyticsByShareId={analyticsByShareId}
         previewShareAction={previewShareAction}
         editShareAction={editShareAction}
-        freeShareCap={freeShareCap}
-        defaultDomainHostname={defaultDomain?.hostname ?? null}
         toggleShareAction={toggleShareAction}
         deleteShareAction={deleteShareAction}
         viewers={allViewers}
@@ -533,6 +434,16 @@ async function renderV2({
           attachments={attachments}
           uploadAction={uploadAttachmentsAction}
           deleteAction={deleteAttachmentAction}
+        />
+      </div>
+
+      <div className="mt-12">
+        <LinkPreviewForm
+          documentId={doc.id}
+          title={doc.title}
+          description={doc.og_description}
+          hasImage={!!doc.og_image_r2_key}
+          action={updateLinkPreviewAction}
         />
       </div>
     </div>
@@ -574,7 +485,7 @@ function collectBanners(sp: NonNullable<Parameters<typeof DocumentPageV2>[0]['se
     out.push({
       key: 'preview_error',
       role: 'alert',
-      message: `Preview couldn't open: ${decodeURIComponent(sp.preview_error)}`,
+      message: `Preview problem: ${decodeURIComponent(sp.preview_error)}`,
     });
   if (sp.replace_error)
     out.push({
@@ -605,6 +516,12 @@ function collectBanners(sp: NonNullable<Parameters<typeof DocumentPageV2>[0]['se
       key: 'edited',
       role: 'status',
       message: 'Share settings updated. All visitors to this link now see the new rules.',
+    });
+  if (sp.preview_saved === '1')
+    out.push({
+      key: 'preview_saved',
+      role: 'status',
+      message: 'Link preview saved. Chat apps may cache the old card for a while.',
     });
   if (sp.share_deleted === '1')
     out.push({

@@ -72,7 +72,6 @@ const shareReport = (startedAt = AFTER_RELEASE) =>
   renderToStaticMarkup(
     <ShareAnalytics
       shareSlug="quick-glass"
-      hostHandle={null}
       recipientLabel="Acme"
       viewers={[viewer]}
       sessions={[session(startedAt)]}

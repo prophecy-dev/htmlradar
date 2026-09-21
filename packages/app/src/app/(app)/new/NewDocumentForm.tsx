@@ -11,7 +11,6 @@
 import { useRef, useState, useTransition } from 'react';
 import { AlertCircle, ArrowRight, FileText, Link2, Upload } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { captureClientEvent } from '@/lib/events-client';
 
 import type { NewDocumentMode as Mode } from '@/lib/new-document-mode';
 
@@ -140,10 +139,6 @@ export function NewDocumentForm({ action, initialMode = 'upload' }: NewDocumentF
                   return;
                 }
                 if (file.size > MAX_UPLOAD_BYTES) {
-                  void captureClientEvent('upload.validation_failed', {
-                    reason: 'file_too_big',
-                    size_bytes: file.size,
-                  });
                   setFileName(file.name);
                   setFileError(
                     `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 30 MB.`,
@@ -151,10 +146,6 @@ export function NewDocumentForm({ action, initialMode = 'upload' }: NewDocumentF
                   return;
                 }
                 if (!HTML_MIME_TYPES.has(file.type) && !/\.html?$/i.test(file.name)) {
-                  void captureClientEvent('upload.validation_failed', {
-                    reason: 'wrong_file_type',
-                    mime: file.type || null,
-                  });
                   setFileName(file.name);
                   setFileError(
                     'Only single-file HTML uploads are supported. Rename it to .html if you already exported.',
@@ -171,11 +162,7 @@ export function NewDocumentForm({ action, initialMode = 'upload' }: NewDocumentF
               error={urlError}
               onValueChange={(v) => {
                 setUrlValue(v);
-                const err = validateUrl(v);
-                if (err && !urlError) {
-                  void captureClientEvent('upload.validation_failed', { reason: 'invalid_url' });
-                }
-                setUrlError(err);
+                setUrlError(validateUrl(v));
               }}
             />
           )}

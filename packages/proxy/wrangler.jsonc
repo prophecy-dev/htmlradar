@@ -1,0 +1,62 @@
+{
+  // The recipient side: serves /r/{slug}, the gates, the tracker and its
+  // /t/* endpoints. Internal Somnia tool; the dashboard (packages/app) shares
+  // the D1 database and the R2 bucket.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "htmlradar-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+
+  // Reachable on *.workers.dev until a custom domain is attached; no routes.
+  "workers_dev": true,
+
+  // Rebuilds the tracker and regenerates src/tracker-bundle.ts before every
+  // bundle, so the /v1/tracker.{version}.js this worker serves is always the
+  // bytes it hashes. Runs under `wrangler dev` too, on tracker changes only:
+  // the default watch_dir is ./src, where the generated file lands, which
+  // restarts the build forever.
+  "build": {
+    "command": "pnpm --filter @htmlradar/tracker build && node scripts/tracker-bundle.mjs",
+    "watch_dir": "../tracker/src",
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "htmlradar",
+      "database_id": "2efffb03-a481-4b53-b767-77689e5469a9",
+      "migrations_dir": "../db/migrations",
+    },
+  ],
+
+  "r2_buckets": [{ "binding": "DOCS_BUCKET", "bucket_name": "htmlradar-docs" }],
+
+  // Cloudflare Email Service. Sends the verification code and the first-read
+  // alert; MAIL_FROM must be on a domain onboarded to Email Service.
+  "send_email": [{ "name": "EMAIL" }],
+
+  "vars": {
+    // Host recipient links are printed on. Unconfirmed; docs.hive.land is the
+    // recommendation.
+    "SHARE_HOST": "docs.hive.land",
+    // The dashboard, linked from first-read alerts. Empty: alerts carry no link.
+    "APP_ORIGIN": "",
+    "MAIL_FROM": "docs@hive.land",
+    "BRAND_NAME": "Hivemarket",
+    // Who a recipient writes to about their data (address or URL), shown on
+    // /privacy. Empty: the page points them at the sender.
+    "PRIVACY_CONTACT": "",
+    // Empty: documents load the tracker from this worker's own bundled copy.
+    // Set only to serve it from somewhere else.
+    "TRACKER_URL": "",
+  },
+
+  // Secrets — `wrangler secret put <NAME>`:
+  //   SESSION_SECRET      HMAC key for gate cookies, owner preview tokens and
+  //                       code hashes. The SAME value the dashboard uses to
+  //                       mint preview tokens.
+  //   TELEGRAM_BOT_TOKEN  optional; first-read alerts also go to Telegram for
+  //                       senders with profiles.telegram_chat_id set.
+
+  "observability": { "enabled": true },
+}

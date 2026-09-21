@@ -10,8 +10,9 @@ export interface Geo {
 }
 
 export interface TrackerConfig {
-  supabaseUrl: string;
-  supabaseAnonKey: string;
+  // Origin the tracker reports to: POST {endpoint}/t/start_session and
+  // /t/update_session. The proxy that served the document, in practice.
+  endpoint: string;
   shareSlug: string;
 
   // If set, the proxy already collected the viewer's email (e.g. allow-list

@@ -6,33 +6,25 @@
 //
 // The write itself lives in lib/create-document.ts, shared with
 // POST /api/v1/shares so the two paths cannot drift. What stays here is the
-// form's own business: reading FormData, validating what the customer typed,
+// form's own business: reading FormData, validating what the owner typed,
 // and turning a failure into a message on /new.
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { requireUser, serverClient } from '@/lib/supabase-server';
-import { captureServerEvent } from '@/lib/events';
+import { getCurrentUser, requireUser } from '@/lib/auth';
+import { db } from '@/lib/cf';
 import { isHtmlFile, validateSourceUrl } from '@/lib/html-source';
 import type { HandoffUploadResult } from '@/lib/staged-handoff';
 import { createDocumentForUser, MAX_UPLOAD_BYTES } from '@/lib/create-document';
 
 export async function createDocument(formData: FormData) {
   const user = await requireUser();
-  const supabase = serverClient();
-
-  // Documents are no longer capped (pricing v4) — the free-tier lever is the
-  // tracked-link cap, enforced at share creation (createShareAction +
-  // enforce_share_cap, schema/027). Uploading a document is unrestricted.
 
   const sourceType = formData.get('source_type') as 'upload' | 'url';
   const title = String(formData.get('title') ?? '').trim() || 'Untitled document';
 
-  // Failures are caught, captured as an event, and surfaced inline on /new —
-  // previously any throw here fell through to the generic error boundary
-  // with no analytics trail. Redirects stay at top level (redirect() throws
-  // internally and must not be swallowed by this catch — house pattern from
-  // docs/[id]/actions.ts).
+  // Redirects stay at top level: redirect() throws internally and must not be
+  // swallowed by this catch.
   let docId: string | null = null;
   let errorMessage: string | null = null;
   try {
@@ -40,7 +32,7 @@ export async function createDocument(formData: FormData) {
       const sourceUrl = String(formData.get('source_url') ?? '').trim();
       const urlError = validateSourceUrl(sourceUrl);
       if (urlError) throw new Error(urlError);
-      docId = await createDocumentForUser(supabase, user.id, title, {
+      docId = await createDocumentForUser(db(), user.id, title, {
         type: 'url',
         url: sourceUrl,
       });
@@ -51,7 +43,7 @@ export async function createDocument(formData: FormData) {
       if (!isHtmlFile(file.name, file.type)) {
         throw new Error('Only HTML files are supported. Rename your export to .html and retry.');
       }
-      docId = await createDocumentForUser(supabase, user.id, title, {
+      docId = await createDocumentForUser(db(), user.id, title, {
         type: 'upload',
         bytes: new Uint8Array(await file.arrayBuffer()),
         filename: file.name || null,
@@ -59,25 +51,12 @@ export async function createDocument(formData: FormData) {
     }
   } catch (e) {
     errorMessage = e instanceof Error ? e.message : 'Upload failed.';
+    console.error('[new] document create failed', e);
   }
 
   if (errorMessage || !docId) {
-    const reason = errorMessage ?? 'Upload failed.';
-    await captureServerEvent({
-      event: 'document.upload_failed',
-      distinctId: user.id,
-      userId: user.id,
-      properties: { source_type: sourceType, reason },
-    });
-    redirect(`/new?upload_error=${encodeURIComponent(reason)}`);
+    redirect(`/new?upload_error=${encodeURIComponent(errorMessage ?? 'Upload failed.')}`);
   }
-
-  await captureServerEvent({
-    event: 'document.created',
-    distinctId: user.id,
-    userId: user.id,
-    properties: { source_type: sourceType, doc_id: docId },
-  });
 
   revalidatePath('/docs');
   redirect(`/docs/${docId}`);
@@ -86,24 +65,9 @@ export async function createDocument(formData: FormData) {
 // The tools need a structured outcome: redirect() throws, and cannot tell a
 // browser whether to retain its file after an uncertain network response.
 export async function createStagedDocument(formData: FormData): Promise<HandoffUploadResult> {
-  let userId: string | null = null;
-  const fail = async (reason: 'invalid_file' | 'upload_failed'): Promise<HandoffUploadResult> => {
-    if (userId)
-      await captureServerEvent({
-        event: 'document.upload_failed',
-        distinctId: userId,
-        userId,
-        properties: { source_type: 'upload', reason },
-      });
-    return { ok: false, reason };
-  };
   try {
-    const supabase = serverClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getCurrentUser();
     if (!user) return { ok: false, reason: 'auth' };
-    userId = user.id;
     const file = formData.get('file');
     const creationId = formData.get('creation_id');
     if (
@@ -114,14 +78,14 @@ export async function createStagedDocument(formData: FormData): Promise<HandoffU
       typeof creationId !== 'string' ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(creationId)
     ) {
-      return fail('invalid_file');
+      return { ok: false, reason: 'invalid_file' };
     }
     const title =
       String(formData.get('title') ?? '')
         .trim()
         .slice(0, 120) || 'Untitled document';
     const documentId = await createDocumentForUser(
-      supabase,
+      db(),
       user.id,
       title,
       {
@@ -132,13 +96,11 @@ export async function createStagedDocument(formData: FormData): Promise<HandoffU
       creationId,
     );
     // No revalidatePath here: on the edge runtime via next-on-pages it crashes
-    // the post-action re-render of the calling page and the browser sees a 500
-    // after the document was already created (seen on /convert, 16 Sep 2026;
-    // the settings actions skip it for the same reason). /docs reads fresh on
+    // the post-action re-render of the calling page. /docs reads fresh on
     // every request, so there is nothing to revalidate.
     return { ok: true, documentId };
-  } catch {
-    // No PDF-derived strings or raw exceptions in analytics or error URLs.
-    return fail('upload_failed');
+  } catch (e) {
+    console.error('[new] staged create failed', e);
+    return { ok: false, reason: 'upload_failed' };
   }
 }

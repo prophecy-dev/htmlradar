@@ -15,7 +15,7 @@
 import { cn } from '@/lib/cn';
 import { CopySlugButton } from '@/components/CopySlugButton';
 import { countDistinctViewers } from '@/lib/viewer-metrics';
-import { ADDRESS_UNAVAILABLE, domainDisconnectedNote, shareUrl } from '@/lib/share-url';
+import { shareUrl } from '@/lib/share-url';
 import { SessionsList } from '@/components/SessionsList';
 import {
   hasPreReleaseSessions,
@@ -37,18 +37,6 @@ interface SectionRow {
 
 export interface ShareAnalyticsProps {
   shareSlug: string;
-  // The hostname the share stores (schema/043), or null for the apex — every
-  // printed and copied address goes through shareUrl with it.
-  hostHandle: string | null;
-  // The customer's own domain when the share was issued on one (schema/052).
-  // It wins over the handle, and like the handle it travels with the row.
-  customHostname?: string | null;
-  // The share names a domain whose hostname could not be read. Nothing prints
-  // an address then: an apex URL would look right and open nothing.
-  addressUnavailable?: boolean;
-  // The share's own domain has stopped answering (schema/052). The link does
-  // not open, so the waiting panel must not invite the owner to send it.
-  domainDown?: boolean;
   recipientLabel: string | null;
   viewers: Viewer[];
   sessions: Session[];
@@ -88,10 +76,6 @@ function formatDuration(seconds: number): string {
 
 export function ShareAnalytics({
   shareSlug,
-  hostHandle,
-  customHostname = null,
-  addressUnavailable = false,
-  domainDown = false,
   recipientLabel,
   viewers,
   sessions,
@@ -105,10 +89,6 @@ export function ShareAnalytics({
     return (
       <WaitingState
         shareSlug={shareSlug}
-        hostHandle={hostHandle}
-        customHostname={customHostname}
-        addressUnavailable={addressUnavailable}
-        domainDown={domainDown}
         recipientLabel={recipientLabel}
         shareStatus={shareStatus}
       />
@@ -245,24 +225,14 @@ function Stat({
 
 function WaitingState({
   shareSlug,
-  hostHandle,
-  customHostname,
-  addressUnavailable = false,
-  domainDown = false,
   recipientLabel,
   shareStatus = 'live',
 }: {
   shareSlug: string;
-  hostHandle: string | null;
-  customHostname: string | null;
-  addressUnavailable?: boolean;
-  domainDown?: boolean;
   recipientLabel: string | null;
   shareStatus?: 'live' | 'revoked' | 'expired';
 }) {
-  const fullUrl = addressUnavailable
-    ? ADDRESS_UNAVAILABLE
-    : shareUrl(shareSlug, hostHandle, customHostname);
+  const fullUrl = shareUrl(shareSlug);
   const who = recipientLabel ?? 'the recipient';
 
   // Revoked/expired with no reads: don't tell the owner to send a link that
@@ -286,28 +256,6 @@ function WaitingState({
     );
   }
 
-  // The link's own domain has stopped answering, so the address below would
-  // copy cleanly and open nothing and the invitation to send it would be
-  // wrong. Same sentence as the share card and the share table, said once, in
-  // place of that invitation — for the same reason the revoked branch above
-  // exists. Revoked and expired come first: those are the owner's own doing,
-  // and re-enabling the link is the next step whatever the domain is doing.
-  if (domainDown && customHostname) {
-    return (
-      <div className="space-y-3 rounded-xl border border-dashed border-alert/30 bg-alert/5 px-5 py-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-alert">
-          Domain disconnected
-        </p>
-        <h3 className="font-serif text-[20px] leading-snug text-ink md:text-[22px]">
-          No reads yet, and none can arrive.
-        </h3>
-        <p className="max-w-md text-[13.5px] leading-relaxed text-ink-soft">
-          {domainDisconnectedNote(customHostname)}
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-5 rounded-xl border border-dashed border-signal/30 bg-paper-2/30 px-5 py-6">
       <div>
@@ -325,13 +273,7 @@ function WaitingState({
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-paper px-4 py-3">
         <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink">{fullUrl}</span>
-        {!addressUnavailable && (
-          <CopySlugButton
-            slug={shareSlug}
-            hostHandle={hostHandle}
-            customHostname={customHostname}
-          />
-        )}
+        <CopySlugButton slug={shareSlug} />
       </div>
     </div>
   );

@@ -1,48 +1,20 @@
-// GET /api/v1/shares/{share_id}/activity — who read this link, and where they
-// spent their time.
-//
-// Same three tables and the same four filters the per-share dashboard page
-// applies (app/(app)/dashboard/[slug]/page.tsx), because an API that reports
-// different numbers from the page the customer is looking at is worse than no
-// API. Those filters are:
-//
-//   1. internal viewers (the owner's own test reads, @htmlradar staff) are out;
-//   2. phantom sessions — bounced with zero active time and zero scroll, a
-//      tracker ghost — are out;
-//   3. meta "sections" (page numbers, "01 / 14") are out;
-//   4. a session's section dwell is rescaled so it cannot exceed that
-//      session's active time, which stale pre-fix tracker data violates.
-//
-// The aggregation lives inline on that page rather than in a shared function,
-// and it is a page-render concern shaped for its own components; what is
-// reused here is the filtering rules, not a copy of its output shape.
+// GET /api/v1/shares/{id}/activity[?include_detail=true] — who opened one
+// link and what they read. {id} is the share id, its slug, or the whole link.
+// One row per person (same email = same person); internal viewers and phantom
+// bounces are excluded, as on the dashboard. Location and device only when
+// asked for.
 
 import type { NextRequest } from 'next/server';
-import {
-  authenticateApiKey,
-  errorResponse,
-  jsonResponse,
-  NOT_FOUND,
-  serviceClient,
-} from '@/lib/api-auth';
+import { listSectionEvents, listSessions, listViewers } from '@htmlradar/db/owner';
+import { authenticateApiKey, CHEAP_MAX, json, notFound } from '@/lib/api-auth';
 import { findOwnedShare } from '@/lib/api-share-lookup';
+import { db } from '@/lib/cf';
 import { isMetaSectionTitle } from '@/lib/section-filter';
 import { shareUrl } from '@/lib/share-url';
-import { customHostnameMissing, customHostnameOf } from '@/lib/custom-domains';
-import type { Session, SectionEvent, Viewer } from '@/lib/types';
+import type { SectionEvent, Session, Viewer } from '@/lib/types';
 
 export const runtime = 'edge';
 
-/**
- * Where the reader was and what they read on, per person.
- *
- * Off unless the caller asks for it (`?include_detail=true`), which is the
- * 31 August decision written down: this is a named person's location and
- * device, it would be passing through a language model, and the minimal
- * report answers "was it read, and which parts" without any of it. Everything
- * here is already loaded for the grouping below, so asking costs no extra
- * query — the parameter is about what leaves the building, not about work.
- */
 interface ViewerDetail {
   country: string | null;
   city: string | null;
@@ -57,65 +29,32 @@ interface ViewerOut {
   last_seen: string;
   active_seconds: number;
   max_scroll: number;
-  sections: { title: string; time_seconds: number }[];
+  sections: Array<{ title: string; time_seconds: number }>;
   detail?: ViewerDetail;
 }
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  // 300 an hour per key. Polling for "has it been read yet?" is the whole
-  // point of this endpoint, so the budget is the loosest of the three; the
-  // read itself is the expensive part, hence a ceiling at all.
-  const auth = await authenticateApiKey(req, { name: 'activity', per: 'key', max: 300 });
-  if ('error' in auth) return errorResponse(auth.error);
+  const auth = await authenticateApiKey(req, { name: 'activity', max: CHEAP_MAX });
+  if ('error' in auth) return auth.error;
   const { caller } = auth;
-
-  // Opt-in, and only the exact word: an absent, empty or misspelt parameter
-  // means the minimal report, never the detailed one.
   const includeDetail = new URL(req.url).searchParams.get('include_detail') === 'true';
 
-  const supabase = serviceClient();
-  const share = await findOwnedShare<{
-    id: string;
-    slug: string;
-    owner_id: string;
-    recipient_label: string | null;
-    host_handle: string | null;
-    custom_domain_id: string | null;
-  }>(
-    supabase,
-    caller.userId,
-    params.id,
-    'id, slug, recipient_label, host_handle, custom_domain_id, custom_domains(hostname)',
-  );
+  const share = await findOwnedShare(caller.userId, decodeURIComponent(params.id));
+  if (!share) return notFound();
+  const url = shareUrl(share.slug);
 
-  // Someone else's link is indistinguishable from one that does not exist —
-  // a key must not be usable to probe for share ids.
-  if (!share) return errorResponse(NOT_FOUND);
-
-  // A link on a customer's domain whose hostname did not come back has no
-  // address we can print. The apex address would open nothing, so the report
-  // is refused rather than answered with a URL that is wrong.
-  if (customHostnameMissing(share)) {
-    return errorResponse({
-      status: 500,
-      body: {
-        error: 'internal',
-        message: 'We could not read the address this link is served on. Try again.',
-      },
-    });
-  }
-
-  const url = shareUrl(share.slug, share.host_handle, customHostnameOf(share));
-
-  const [{ data: viewerRows }, { data: sessionRows }] = await Promise.all([
-    supabase.from('viewers').select('*').eq('share_id', share.id),
-    supabase.from('sessions').select('*').eq('share_id', share.id),
+  const d = db();
+  const scope = { shareId: share.id };
+  const [viewerRows, sessionRows, eventRows] = await Promise.all([
+    listViewers(d, caller.userId, scope),
+    listSessions(d, caller.userId, scope),
+    listSectionEvents(d, caller.userId, scope),
   ]);
 
-  const viewers = (viewerRows ?? []) as Viewer[];
+  const viewers: Viewer[] = viewerRows;
   const internalViewerIds = new Set(viewers.filter((v) => v.is_internal === true).map((v) => v.id));
 
-  const sessions = ((sessionRows ?? []) as Session[]).filter(
+  const sessions = (sessionRows as Session[]).filter(
     (s) =>
       !internalViewerIds.has(s.viewer_id) &&
       !(
@@ -126,17 +65,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   );
 
   if (sessions.length === 0) {
-    return jsonResponse(200, {
-      share_id: share.id,
-      url,
-      opened: false,
-      viewers: [],
-    });
+    return json({ share_id: share.id, url, opened: false, viewers: [] });
   }
 
-  const sectionEvents = await loadSections(
-    supabase,
-    sessions.map((s) => s.id),
+  const kept = new Set(sessions.map((s) => s.id));
+  const sectionEvents: SectionEvent[] = eventRows.filter(
+    (e) => kept.has(e.session_id) && !isMetaSectionTitle(e.section_title, e.section_id),
   );
 
   // One row per PERSON: same email = same person however many devices they
@@ -209,12 +143,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     }))
     .sort((a, b) => (a.first_open < b.first_open ? -1 : 1));
 
-  return jsonResponse(200, {
-    share_id: share.id,
-    url,
-    opened: out.length > 0,
-    viewers: out,
-  });
+  return json({ share_id: share.id, url, opened: out.length > 0, viewers: out });
 }
 
 interface SectionRow {
@@ -239,20 +168,6 @@ function detailOf(viewers: Viewer[]): ViewerDetail {
     device: latest?.device_type ?? null,
     referrer: latest?.referrer ?? null,
   };
-}
-
-// section_events for these sessions, minus the meta/structural ones.
-async function loadSections(
-  supabase: ReturnType<typeof serviceClient>,
-  sessionIds: string[],
-): Promise<SectionEvent[]> {
-  const { data } = await supabase
-    .from('section_events')
-    .select('session_id, section_id, section_title, time_seconds, ordinal')
-    .in('session_id', sessionIds);
-  return ((data ?? []) as SectionEvent[]).filter(
-    (e) => !isMetaSectionTitle(e.section_title, e.section_id),
-  );
 }
 
 // A session's section dwell cannot exceed the time the tab was actually

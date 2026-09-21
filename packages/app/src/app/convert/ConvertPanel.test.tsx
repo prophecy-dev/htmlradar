@@ -18,7 +18,6 @@ import { HANDOFF_MESSAGES } from '@/lib/staged-handoff';
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 const { push } = router;
 vi.mock('next/navigation', () => ({ useRouter: () => router }));
-vi.mock('@/lib/events-client', () => ({ captureClientEvent: vi.fn(async () => {}) }));
 vi.mock('@/lib/pdf-to-deck', async (original) => ({
   ...(await original<typeof import('@/lib/pdf-to-deck')>()),
   convertPdfToDeck: vi.fn(),
@@ -84,7 +83,7 @@ beforeEach(() => {
   action.mockClear();
   vi.mocked(convertPdfToDeck).mockReset();
   host = document.createElement('div');
-  document.body.append(host);
+  document.body.appendChild(host);
   root = createRoot(host);
 });
 afterEach(async () => {

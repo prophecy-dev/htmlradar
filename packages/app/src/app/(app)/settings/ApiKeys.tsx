@@ -94,11 +94,8 @@ function InstallCommands({ apiKey }: { apiKey: string }) {
         ))}
       </div>
       <p className="mt-4 text-[12.5px] leading-relaxed text-graphite">
-        VS Code, Windsurf, Zed, Gemini CLI, Goose, Cline and any other MCP client are covered at{' '}
-        <a href="/mcp" className="text-signal-dark underline underline-offset-4 hover:no-underline">
-          htmlradar.com/mcp
-        </a>
-        .
+        Every command also needs <code className="font-mono">HTMLRADAR_API_URL</code> set to this
+        dashboard’s address (the server has no default).
       </p>
     </div>
   );
@@ -131,11 +128,8 @@ export function ApiKeys({
         watches and reports one of those.
       </p>
       <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-ink-soft">
-        Use HTMLRadar from Claude Code, Cursor or any agent: create a key here, then follow{' '}
-        <a href="/mcp" className="text-signal-dark underline underline-offset-4 hover:no-underline">
-          htmlradar.com/mcp
-        </a>
-        .
+        Use it from Claude Code, Cursor or any agent through packages/mcp in the htmlradar repo,
+        with <code className="font-mono">HTMLRADAR_API_URL</code> pointing at this dashboard.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-3">

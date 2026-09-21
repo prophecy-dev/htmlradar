@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { createTransport, RpcError } from '../src/transport.js';
 
-const ORIGIN = 'https://example.supabase.co';
+const ORIGIN = 'https://docs.example';
 
 function mockFetch(response: { status?: number; ok?: boolean; body?: unknown; text?: string }) {
   const status = response.status ?? 200;
@@ -36,7 +36,7 @@ describe('transport', () => {
     });
     globalThis.fetch = f as unknown as typeof fetch;
 
-    const t = createTransport({ supabaseUrl: ORIGIN, anonKey: 'anon' });
+    const t = createTransport({ endpoint: ORIGIN });
     const result = await t.startSession({
       shareSlug: 'swift-falcon-a3f2',
       email: 'marc@example.com',
@@ -53,17 +53,18 @@ describe('transport', () => {
     });
     expect(f).toHaveBeenCalledOnce();
     const [url, init] = f.mock.calls[0]!;
-    expect(url).toBe(`${ORIGIN}/rest/v1/rpc/start_session`);
+    expect(url).toBe(`${ORIGIN}/t/start_session`);
     const headers = (init as RequestInit).headers as Record<string, string>;
-    expect(headers.apikey).toBe('anon');
-    expect(headers.Authorization).toBe('Bearer anon');
+    // A simple request: no credentials, no preflight-triggering content type.
+    expect(headers['Content-Type']).toMatch(/^text\/plain/);
+    expect((init as RequestInit).credentials).toBe('omit');
   });
 
   it('update_session honors keepalive', async () => {
     const f = mockFetch({ status: 204 });
     globalThis.fetch = f as unknown as typeof fetch;
 
-    const t = createTransport({ supabaseUrl: ORIGIN, anonKey: 'anon' });
+    const t = createTransport({ endpoint: ORIGIN });
     await t.updateSession(
       {
         sessionId: 's1',
@@ -87,7 +88,7 @@ describe('transport', () => {
     });
     globalThis.fetch = f as unknown as typeof fetch;
 
-    const t = createTransport({ supabaseUrl: ORIGIN, anonKey: 'anon' });
+    const t = createTransport({ endpoint: ORIGIN });
     try {
       await t.startSession({
         shareSlug: 'x',
