@@ -55,6 +55,8 @@ section level rather than a single "opened" flag.
 
 Send-side analytics for HTML documents. Upload an HTML file (or paste a URL you already host), send a tracked link `htmlradar.page/r/{slug}`, see who opened it, which sections they dwelled on, and when they bounced. Section-level dwell, not "opened."
 
+Starting from a PDF instead? [htmlradar.com/convert](https://htmlradar.com/convert) turns a landscape PDF deck — 2 to 60 pages, up to 30 MB — into one HTML page in the browser, with each slide as an image and a heading per slide. The download is free and needs no account; sign in to share the result as a tracked link.
+
 ## What it does
 
 - **Section-level dwell.** At least half a section must stay visible for one continuous second before its dwell starts qualifying; the read signal fires after three qualified seconds. The tracker auto-detects sections from your HTML: explicit anchored headings → bare `h1/h2/h3` (slugged from text) → slide/page containers (`section`, `.slide`, `.page`) → paragraph buckets on plain prose. Dashboard tells you a recipient spent 2m 41s on §03 The Ask, 12s on Problem, and skipped Market sizing.
@@ -123,7 +125,7 @@ Core hosting runs on Cloudflare and Supabase. Resend is optional for notificatio
 4. Send the tracked link.
 5. Watch the dashboard. HTMLRadar requests a first-read email when the recipient creates their first real session.
 
-Free tier: 2 tracked links lifetime across unlimited documents, 20 attachments per doc up to 25 MB each and 100 MB total per doc. Pro tier ($15/month, or $150/year — two months free): unlimited tracked links, your own link names (`htmlradar.page/r/acme-proposal` rather than a generated one), no "Powered by HTMLRadar" footer on the recipient view, priority support. Coming soon on Pro: custom domain on share URLs, dynamic per-viewer watermark, repeat-open alerts. What's next is on the [public roadmap](https://github.com/htmlradar/htmlradar/issues?q=is%3Aissue+label%3Aroadmap).
+Free tier: 2 tracked links lifetime across unlimited documents, 20 attachments per doc up to 25 MB each and 100 MB total per doc. Pro tier ($15/month, or $150/year — two months free): unlimited tracked links, your own link names (`htmlradar.page/r/acme-proposal` rather than a generated one), no "Powered by HTMLRadar" footer on the recipient view, priority support, and your own domain on share URLs (`decks.acme.com/r/acme-proposal` rather than `htmlradar.page` — one CNAME record, no extra charge; see [custom domains](https://htmlradar.com/custom-domains)). Coming soon on Pro: dynamic per-viewer watermark, repeat-open alerts. What's next is on the [public roadmap](https://github.com/htmlradar/htmlradar/issues?q=is%3Aissue+label%3Aroadmap).
 
 ## Quick start — self-host
 

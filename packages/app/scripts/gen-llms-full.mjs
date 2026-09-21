@@ -29,9 +29,12 @@ import { fileURLToPath } from 'node:url';
 const ORIGIN = (process.argv[2] ?? 'https://htmlradar.com').replace(/\/$/, '');
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/llms-full.txt');
 
-// The pages worth carrying in full. Not the whole sitemap: the seven compare
-// pages and the three use-case pages repeat each other heavily, and a file
-// padded with near-duplicates is a worse answer than a short one.
+// The pages worth carrying in full. Not the whole sitemap: the remaining five
+// compare pages and the three use-case pages repeat each other heavily, and a
+// file padded with near-duplicates is a worse answer than a short one. DocSend
+// and Papermark earn their place because they are the two products a reader is
+// actually choosing between, and Papermark's page carries the data-room answer
+// that says who HTMLRadar is not for. The full list of pages is in /llms.txt.
 const PAGES = [
   '/',
   '/about',
@@ -39,10 +42,16 @@ const PAGES = [
   '/pricing',
   '/mcp',
   '/self-hosted',
+  '/custom-domains',
+  '/tools',
   '/tools/html-to-link',
   '/convert',
   '/for/claude-artifacts',
+  '/for/claude-artifact-expiry',
+  '/for/claude-artifact-without-an-account',
+  '/for/claude-artifact-access-control',
   '/compare/docsend',
+  '/compare/papermark',
   '/blog/what-deck-sharing-tools-record',
 ];
 
@@ -86,6 +95,18 @@ const parts = [
   'HTMLRadar is an open-source tool for sharing an HTML deck, brief, or proposal',
   'as a tracked link, and seeing who opened it, which sections they read, and for',
   'how long.',
+  '',
+  'For founders, consultants, and agencies who send a single document as HTML and',
+  'want to know who read it. Not for teams that need a multi-document data room,',
+  'e-signature, or enterprise document control — DocSend and Papermark are built',
+  'for that — and not for measuring traffic to your own website, which is what an',
+  'analytics tool is for.',
+  '',
+  'Open source (AGPL-3.0-or-later), self-hostable, source at',
+  'https://github.com/htmlradar/htmlradar. Free for two tracked links, then $15 a',
+  'month or $150 a year, which includes tracked links on your own domain. The',
+  'prices and limits below are whatever the pricing page said on the generation',
+  'date; if that date is old, check https://htmlradar.com/pricing.',
   '',
   `Generated from the live pages at ${ORIGIN} on ${today} by`,
   'packages/app/scripts/gen-llms-full.mjs. If a fact here disagrees with the page',

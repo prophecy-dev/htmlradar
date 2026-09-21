@@ -180,7 +180,7 @@ export default function ClientReportTrackingPage() {
             items={[
               {
                 q: 'My report is a PDF, not a web page. Does this work?',
-                a: 'Not yet — HTMLRadar takes HTML uploads, normally a .html or .htm file, and will not accept a PDF. If the tool that builds your report can export HTML, use that version, and check it on a phone before you send it: exported HTML is not always responsive.',
+                a: 'Not directly — HTMLRadar takes HTML uploads, normally a .html or .htm file, and will not accept a PDF. If the tool that builds your report can export HTML, use that version, and check it on a phone before you send it: exported HTML is not always responsive. If the report is a landscape slide deck, /convert turns a PDF of 2 to 60 pages, up to 30 MB, into one HTML page in your browser.',
               },
               {
                 q: 'Will the client know the report is being tracked?',

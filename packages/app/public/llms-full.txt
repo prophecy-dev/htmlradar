@@ -4,7 +4,19 @@ HTMLRadar is an open-source tool for sharing an HTML deck, brief, or proposal
 as a tracked link, and seeing who opened it, which sections they read, and for
 how long.
 
-Generated from the live pages at https://htmlradar.com on 2026-09-04 by
+For founders, consultants, and agencies who send a single document as HTML and
+want to know who read it. Not for teams that need a multi-document data room,
+e-signature, or enterprise document control — DocSend and Papermark are built
+for that — and not for measuring traffic to your own website, which is what an
+analytics tool is for.
+
+Open source (AGPL-3.0-or-later), self-hostable, source at
+https://github.com/htmlradar/htmlradar. Free for two tracked links, then $15 a
+month or $150 a year, which includes tracked links on your own domain. The
+prices and limits below are whatever the pricing page said on the generation
+date; if that date is old, check https://htmlradar.com/pricing.
+
+Generated from the live pages at https://htmlradar.com on 2026-09-21 by
 packages/app/scripts/gen-llms-full.mjs. If a fact here disagrees with the page
 it came from, the page is right and this file is stale.
 
@@ -329,6 +341,7 @@ For founders and consultants who send real diligence packages.
 Everything in Free, plus:
 Unlimited tracked links
 Name your own links: htmlradar.page/r/acme-proposal
+Your own domain for links: decks.yourcompany.com/r/acme-proposal
 No HTMLRadar promotion in the footer on recipient views
 Priority email support, response inside one business day
 Upgrade to Pro
@@ -336,6 +349,13 @@ Upgrade to Pro
 HTMLRadar 4m ago
 Marc just opened Seed Deck, Q2.
 Halbrook Capital · 2m 41s on §03 The Ask · still active
+
+Included in Pro
+Your links, your domain.
+1 Type your subdomain in Settings — decks.acme.com.
+2 Add the one CNAME record we show you.
+3 It turns Live on its own, usually in minutes.
+See how it works
 
 Self-host
 Run it on your own Cloudflare and Supabase .
@@ -355,6 +375,9 @@ Yes. The hosted free tier covers 2 tracked links across any number of documents,
 
 What does Pro add?
 Unlimited tracked links, your own link names (htmlradar.page/r/acme-proposal instead of a random one), no HTMLRadar promotion in the footer on recipient views, and priority support. $15/mo flat — not per seat. Annual billing is $150 a year, which is two months free.
+
+Can I use my own domain?
+Yes, on Pro. Point a subdomain of your own — decks.yourcompany.com — at HTMLRadar with one CNAME record, and every new link you create is served from it, with the same tracking, gates and reports. Links you have already sent keep working exactly where they are.
 
 Can I run HTMLRadar for free forever?
 Yes — self-host it. The full source is AGPL-3.0 on GitHub and runs on your own Cloudflare and Supabase accounts; their free tiers cover personal use.
@@ -700,7 +723,7 @@ Yes. HTMLRadar is AGPL-3.0 end to end. Set HTMLRADAR_API_URL to your own deploym
 
 Get an API key First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
 
-Related: HTMLRadar for Claude Code , track a Claude artifact , turn an HTML file into a link , self-hosted document tracking , and Tutorial: share a page from Claude Code, then ask who read it .
+Related: HTMLRadar for Claude Code , track a Claude artifact , turn an HTML file into a link , self-hosted document tracking , Tutorial: share a page from Claude Code, then ask who read it , the HTTP API reference this server calls on your behalf, and all the free HTML tools .
 
 ---
 
@@ -742,6 +765,80 @@ Related: the open-source DocSend alternative , hosted pricing , and how we built
 
 ---
 
+## https://htmlradar.com/custom-domains
+
+Your tracked links on your own domain | HTMLRadar HTMLRadar · Pro
+Your tracked links, on your own domain.
+Updated September 2026
+Pro accounts can serve tracked links from their own subdomain — decks.acme.com/r/deal-name — instead of htmlradar.page. Add one CNAME record in Settings and it turns Live on its own, usually within minutes. Tracking, gates and read reports work exactly as before, and links you have already sent keep working where they are. Included in Pro, no extra charge.
+
+How it works, in three steps
+In Settings, under “Your domain”, type the subdomain you want to use — decks.acme.com, for example.
+Add the one CNAME record we show you, wherever you manage that domain’s DNS — Cloudflare, GoDaddy, Namecheap, or anywhere else.
+Wait a few minutes. It turns Live on its own, and from then on every new link you create goes out on it.
+
+What stays the same
+Tracking, email gates, passwords, expiry dates and the read reports are exactly what they are today — connecting a domain does not change how a link behaves, only where a new one is served from. And it only affects new links: everything you have already sent keeps opening at the address it was issued on, htmlradar.page included.
+
+Common questions
+Can I use a bare domain, like acme.com?
+Not yet. Cloudflare needs a CNAME record to issue the certificate, and a CNAME at the apex of a domain breaks that domain's own mail and website. Use a subdomain instead — decks.acme.com rather than acme.com.
+
+What happens to my links if I disconnect my domain?
+Every link already issued on that domain stops opening, and there's no way to move it to another address — anyone holding one needs a new link from you. Links on the HTMLRadar address are unaffected.
+
+Does it cost extra?
+No. It's included in Pro at $15 a month or $150 a year, with no separate charge for connecting a domain.
+
+My domain is on Cloudflare already — does it still work?
+Yes. We confirm a domain points at us by requesting it over HTTPS ourselves, not by checking DNS, so it works whether your domain's DNS is managed on Cloudflare or anywhere else.
+
+Connect your domain
+Related: pricing and the announcement .
+
+---
+
+## https://htmlradar.com/tools
+
+Free Tools | HTMLRadar HTMLRadar · Free tools
+Free tools.
+No account needed to start. Each one runs in your browser until you ask for a tracked link.
+HTML file to link
+Drop an HTML file, preview it, and get a link that shows who opened it.
+Open →
+Claude artifact to link
+Share a Claude artifact as a link that works without a Claude account.
+Open →
+Claude artifact to PDF
+Save a Claude artifact as a PDF you can attach or print.
+Open →
+PDF deck to web page
+Convert a PDF deck into an HTML web page, free in your browser.
+Open →
+Turning AI-made HTML into a tracked link
+Track a Claude artifact
+What happens after you send an artifact, and how a tracked link answers whether it was read.
+
+Do Claude artifacts expire?
+What Anthropic documents about how long a shared artifact link lasts, and what actually ends access.
+
+Share an artifact with someone who has no Claude account
+Whether your reader needs an account depends on how the artifact was shared. Both rules, and the route that always works.
+
+Password or expiry on a Claude artifact
+Claude offers audience levels, not a password or a date. What it does offer, and how to add a real gate.
+
+HTMLRadar for Claude Code
+Share the HTML that Claude Code writes, straight from the terminal session.
+
+The HTMLRadar MCP server
+Connect Claude to HTMLRadar so it can create and check tracked links for you.
+
+Share a page from Claude Code, then ask who read it
+A walkthrough, from the file Claude wrote to the reading report.
+
+---
+
 ## https://htmlradar.com/tools/html-to-link
 
 Share an HTML File as a Link (Free) | HTMLRadar HTMLRadar · Free tool
@@ -774,7 +871,41 @@ The first 2 tracked links are free, with no credit card. Unlimited links are $15
 Does my file get uploaded before I sign in?
 The file itself is never uploaded to HTMLRadar until you sign in: the preview is rendered by your own browser, and the file is held in your browser storage across the sign-in. If the HTML references images, fonts or stylesheets on other websites, your browser fetches those to render the preview, exactly as it would on any web page. Scripts, forms and navigation are blocked in the preview.
 
-Related: share a Claude artifact as a link , Claude artifact to PDF , and track an HTML deck .
+Related: share a Claude artifact as a link , Claude artifact to PDF , track an HTML deck , and all the free HTML tools .
+
+---
+
+## https://htmlradar.com/convert
+
+PDF Deck to HTML — Free Browser Converter | HTMLRadar Turn your PDF deck into an HTML web page.
+Convert a landscape PDF presentation into one HTML page, with each slide as an image and a table of contents. Conversion runs entirely in your browser. Download the file free without an account, or sign in to share your pitch deck as a tracked link.
+Get a tracked link. Sign in to share your converted deck with a tracked link. The free plan includes 2 tracked links.
+Slides become pictures: text is not selectable or fully accessible to screen readers, links and comments are removed, and fonts, colours and detected titles may differ.
+Your PDF stays in this browser; only the converted HTML uploads when you choose ‘Get a tracked link’ and are signed in.
+Choose a PDF deck Or drop one here. Landscape slides, 2–60 pages, up to 30 MB.
+
+Only convert and share decks you have permission to use.
+
+Common questions
+What PDFs can I convert?
+You can convert landscape PDF decks with 2 to 60 pages and a file size up to 30 MB.
+
+What will I download?
+You will download one HTML file containing your slides as images and a Contents block. You can open the file as a web page.
+
+Do I need an account?
+No. Conversion and HTML download are free without an account. Creating a tracked link requires sign-in.
+
+Is my PDF uploaded for conversion?
+No. Conversion runs entirely in your browser. Creating a tracked link is a separate sharing step after sign-in.
+
+Will my slides become editable web text?
+No. Each slide becomes an image. The converter does not recreate slide text as editable HTML text.
+
+How do I share my pitch deck as a link?
+Convert your PDF deck, then choose “Get a tracked link” and sign in. The free plan includes 2 tracked links.
+
+Related: turn an HTML file into a link , Claude artifact to PDF , and all the free HTML tools .
 
 ---
 
@@ -840,7 +971,159 @@ Yes, for a publicly reachable HTML page. Use absolute URLs for its assets so the
 
 Track your artifact free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
 
-Related: track any HTML deck , reveal.js deck analytics , and proposal tracking .
+Related: track any HTML deck , reveal.js deck analytics , proposal tracking , turn a Claude artifact into a link , and all the free HTML tools .
+Three questions this page does not answer: do Claude artifacts expire , how to share one with someone who has no Claude account , and how to put a password or an expiry date on one .
+
+---
+
+## https://htmlradar.com/for/claude-artifact-expiry
+
+Do Claude Artifacts Expire? | HTMLRadar HTMLRadar · Claude artifacts
+Do Claude artifacts expire?
+Updated September 2026
+No — Anthropic sets no expiry date on an artifact link, and publishes no lifetime for one. A shared or published artifact stays reachable until you unpublish or unshare it, delete it, or an organisation setting takes it away, which means the link you sent last year is probably still open today.
+
+That is worth saying carefully, because “it does not expire” is a claim about documentation rather than about physics. Anthropic's help centre page on publishing and sharing artifacts is the page that lists every sharing setting, and it describes several ways access can end. None of them is a date. Read on 21 September 2026.
+
+What does end access, according to Anthropic
+What happens What Anthropic documents
+You unpublish a chat artifact An Unpublish button appears after publishing and revokes access. It is one-way: Anthropic says you cannot publish that same artifact again, and that persistent storage it used is permanently deleted.
+You unshare from the Share dialog The Share dialog offers an Unshare option in the Artifact shared modal.
+An Enterprise owner turns off External sharing Anthropic states that existing public links stop working until it is turned back on.
+You delete the artifact Everyone you invited loses access.
+An Enterprise retention period ends Standalone chats and any artifacts inside them are deleted. The shortest period an owner can set is 30 days, and the default is to keep data indefinitely.
+
+The retention rule is documented for Enterprise plans only . On Free, Pro and Max there is no equivalent setting in the documentation, so nothing removes an artifact on a schedule.
+
+The one thing that really does expire in 30 days
+If you invited someone to an artifact by e-mail rather than sending them a link, Anthropic documents that pending invitations expire after 30 days , while accepted invitations do not expire. So the invitation has a clock on it and the access it grants does not. That is the opposite of what most people want when they ask whether an artifact expires.
+
+Why “it never expires” is a problem, not a feature
+A permanent link is fine for a demo you want the world to keep. It is less fine for a proposal, a pricing sheet or a board update. The version you sent in March is still the version someone can open in November, and your only lever is unpublishing — which, for a chat artifact, you cannot undo. There is no middle setting between “open forever” and “gone for good”.
+
+Where HTMLRadar helps, and where it does not
+HTMLRadar does not change anything inside Claude. It gives you a second route for the cases above: download the artifact as an HTML file, upload it, and send an HTMLRadar link instead. That link carries an expiry date you choose, and revoking it is reversible in the sense that you can always create another link for the same document. You can also replace the file behind a link you have already sent, so the recipient gets the current version rather than March's.
+Where it does not help: if the artifact needs Claude to run — an AI-powered app, one that reads your connected tools, or one that keeps stored data — then Anthropic runs it on its own infrastructure and an exported HTML file will not carry that behaviour with it. Keep those in Claude. HTMLRadar is for the self-contained page.
+
+Common questions
+Do Claude artifacts expire?
+Not on a timer that Anthropic documents. A published or shared artifact stays reachable until you unpublish or unshare it, delete it, or an organisation setting removes it. The one documented exception is an Enterprise organisation with a custom data retention period, where standalone chats and the artifacts inside them are deleted when that period ends.
+
+How long does a shared Claude artifact link last?
+Anthropic publishes no lifetime for it. The help centre describes how to end access — an Unpublish button, an Unshare option, and the Enterprise External sharing toggle — but never a date on which a working link stops working by itself.
+
+Can I un-share a Claude artifact after I have sent the link?
+Yes. Anthropic documents an Unpublish button for artifacts published from chat and an Unshare option in the Share dialog. Unpublishing is one-way: Anthropic states that once you unpublish an artifact you cannot publish that same artifact again, and that any persistent storage it used is permanently deleted.
+
+Does anything in Claude expire after 30 days?
+One thing does, and it is not the link. Anthropic documents that a pending email invitation to an artifact expires after 30 days, while an accepted invitation does not expire. Separately, 30 days is the shortest custom data retention period an Enterprise organisation can set.
+
+Give a Claude artifact an expiry date First 2 tracked links free. Expiry, password and revoke are on the free plan too.
+
+Related: putting a password or an expiry date on a Claude artifact , sharing one with someone who has no Claude account , and the rest of the AI-made HTML cluster .
+
+---
+
+## https://htmlradar.com/for/claude-artifact-without-an-account
+
+Share a Claude Artifact Without an Account | HTMLRadar HTMLRadar · Claude artifacts
+Sharing a Claude artifact with someone who has no Claude account.
+Updated September 2026
+Sometimes they can open it and sometimes they cannot, and which one you get depends on how the artifact was shared rather than on who you sent it to. An artifact published from chat opens for anyone; an artifact shared from the Share dialog requires every viewer to sign in to Claude.
+
+This is the detail that catches people out, so it is worth reading Anthropic's own wording. Its page on publishing and sharing artifacts splits artifacts into two groups by where they were made, and gives them opposite rules. Checked 21 September 2026.
+How it was shared Can a non-user open it?
+Published from chat, with the Publish button Free, Pro and Max plans, previous chat experience Yes. Anthropic says non-users can “view and interact with any published artifact without signing up” and are prompted to sign up only for advanced features such as AI-powered capabilities.
+Shared from the Share dialog The new Claude experience, Claude Design, Slides, Docs and Claude Code No. Anthropic says a Claude account is required, and that people without one “can't open or interact with a shared artifact, even if they have the link”.
+Invited by e-mail address Beta, on Pro, Max, Team and Enterprise No. Anthropic says the person needs a Claude account with the address you invited, and must create one first if they do not have it.
+
+Two things to know before you send either kind
+First, a shared chat artifact brings the conversation's files with it. Anthropic writes that viewers “also get access to any attachments and files in the conversation that created it”, and advises thinking about that before sharing from a conversation with sensitive documents in it.
+Second, your reader may not see what you see. Anthropic documents that viewers use their own access: an artifact that pulls from connected apps uses the viewer's connections, not yours, and shows an error where they lack access. A client with no Claude account has no connections at all.
+
+The route that works regardless
+In the artifact window, view the underlying code and download the file. Anthropic documents both , and lists single-page HTML websites among the things artifacts commonly are.
+Check it is one self-contained file — styles, scripts and images inline, or assets at absolute URLs.
+Upload it to HTMLRadar and send the link. It opens in any browser, on any device, with no account on the recipient's side and nothing to install.
+
+Where HTMLRadar helps, and where it does not
+It helps with the ordinary case: a deck, a proposal, a report or a one-pager that Claude wrote as a page. You get a link with no sign-in wall, and because it is your link rather than Anthropic's, it also tells you who opened it, which sections they read and how long they stayed — which a published artifact does not report.
+It does not help when the artifact is only interesting because it is running inside Claude. Anything that asks Claude questions, reads a connected tool, or saves data between visits needs Anthropic's infrastructure and a signed-in viewer. Exporting the HTML gives you the shell without the behaviour, so leave those where they are and accept that your reader will need an account.
+
+Common questions
+Does someone need a Claude account to open an artifact I share?
+It depends which mechanism you used. For an artifact published from chat, Anthropic states that non-users can view and interact with it without signing up. For an artifact shared from the Share dialog — which covers the new Claude experience, Claude Design, Claude Slides, Claude Docs and Claude Code — Anthropic states that a Claude account is required and that people without one cannot open it even if they have the link.
+
+How do I tell which kind of artifact I have?
+Look for a Publish button. Anthropic documents publishing as available on Free, Pro and Max plans for artifacts made in chat on the previous experience, and says that publishing, embed codes and copying an artifact code are available only for artifacts made in chat. If you see a Share dialog with access levels instead, your viewer will need an account.
+
+What is the way that always works, whatever the artifact is?
+Export the artifact as an HTML file and host it somewhere that does not ask for a sign-in. Anthropic documents viewing the underlying code, copying it, and downloading files to use outside the conversation. Uploading that file to HTMLRadar gives you a link that opens in any browser with no account on either side.
+
+Will an exported artifact still work outside Claude?
+A self-contained HTML page will. An artifact that uses Claude to answer questions will not, because Anthropic documents that those apps run on its infrastructure and that users authenticate with their own Claude account. The same applies to artifacts that read connected tools through MCP, and to persistent storage, which Anthropic says is only available for published artifacts.
+
+Turn the artifact into an open link First 2 tracked links free. No account needed on the recipient's side, ever.
+
+Related: whether Claude artifacts expire , putting a password or an expiry date on one , and the rest of the AI-made HTML cluster .
+
+---
+
+## https://htmlradar.com/for/claude-artifact-access-control
+
+Password or Expiry on a Claude Artifact | HTMLRadar HTMLRadar · Claude artifacts
+Putting a password or an expiry date on a Claude artifact.
+Updated September 2026
+Claude has neither. Its sharing settings choose an audience — only you, your organisation, or anyone with the link — and an access level, and Anthropic documents no password field and no expiry date anywhere in them. To get either, you export the HTML and put it behind a link that has them.
+
+That is a claim about documentation, which is the only kind of claim worth making here. Anthropic's page on publishing and sharing artifacts is the page that enumerates the settings, and the word “password” does not appear on it. Nor does any date. Read on 21 September 2026.
+
+What Claude does offer
+Control What it does
+Audience, Pro and Max “Only you” or “Anyone with the link”. Two settings, no middle ground.
+Audience, Team and Enterprise “Only people with access”, “Everyone in your organization”, or “Anyone with the link”. The last one needs an Enterprise owner to turn on External sharing first.
+Access level View or edit for most artifacts; view, comment or edit for Claude Design and Claude Slides; view or edit for Claude Docs.
+Invite by e-mail address In beta on Pro, Max, Team and Enterprise. The closest thing to a per-person gate: an invitation works only for the person invited, who must sign in with that address. Up to 50 people per artifact.
+Allowed domains, on an embed Lists the websites that may embed a published artifact. It governs embedding, not who can open the artifact’s own link.
+Version pinning A link can show the latest version or one specific version. If you share the latest, viewers see your changes as you make them.
+
+The invitation route is documented separately . Worth knowing: a pending invitation expires after 30 days, an accepted one never does, and if the artifact is also shared with “anyone with the link” then the people you invited get the same access as everyone else regardless of the level you gave them.
+
+Why that is a gap and not a preference
+“Anyone with the link” is a reasonable default for a prototype. It is the wrong setting for a pricing page, a term sheet or a client report, because the link outlives the conversation: it gets forwarded, pasted into a thread, and opened by people you never picked. The other option is to require every reader to hold a Claude account, which your client probably does not. Between “anyone” and “only Claude users” there is nothing.
+
+The HTMLRadar route
+Download the artifact as a single, self-contained HTML file.
+Upload it to HTMLRadar, or ask Claude to publish it for you through the connector.
+Create the share link and set what it should ask for before it opens. Send that link instead of the artifact.
+Per-link setting What the reader meets
+Password A prompt before the document renders. Minimum eight characters, stored hashed.
+Email gate The reader gives an address before the document opens, and that address is attached to everything they read.
+Allow-list Named addresses, or whole email domains, so only the client’s people get in.
+Expiry date After the date you set, the link stops serving the document. Nothing to remember to switch off.
+Revoke Closes one link immediately, without touching the others.
+
+All five are on the free plan. The free plan limits how many tracked links you create — two, for the lifetime of the account — not which controls you may put on them.
+
+Where this does not help
+A password on an HTMLRadar link protects the copy HTMLRadar serves. It does nothing to the artifact still sitting in Claude, so if you already published that one, unpublish it or you have two doors and only one lock. And if the artifact needs Claude to run — it asks Claude questions, reads a connected tool, or keeps stored data — exporting the HTML gives you the page without the behaviour. Those belong in Claude, gated the way Claude gates them.
+
+Common questions
+Can you password-protect a Claude artifact?
+Not through Claude. Anthropic’s help centre page on publishing and sharing artifacts is the page that enumerates the sharing settings, and it lists audience levels and access levels only. There is no password, passcode or PIN field on a Claude artifact link, and Anthropic documents none.
+
+Can you set an expiry date on a Claude artifact link?
+No date setting is documented. The only expiry anywhere in Anthropic’s artifact documentation applies to pending email invitations, which expire after 30 days; accepted invitations do not expire, and links do not expire at all. Ending access means unpublishing or unsharing.
+
+What access controls does Claude actually offer?
+Audience: on Pro and Max plans, "Only you" or "Anyone with the link"; on Team and Enterprise plans, "Only people with access", "Everyone in your organization", or "Anyone with the link". Access level: view or edit for most artifacts, with comment as well for Claude Design and Claude Slides. Enterprise owners also control an organisation-wide External sharing toggle.
+
+How do I put a password and an expiry on a Claude artifact with HTMLRadar?
+Download the artifact as an HTML file, upload it to HTMLRadar, and set the options on the share link: a password of at least eight characters, an email gate, an allow-list of addresses or domains, and an expiry date after which the link stops opening. All four are on the free plan, which limits how many tracked links you create rather than which controls you can use.
+
+Put a password on a Claude artifact First 2 tracked links free. Password, email gate, allow-list and expiry included.
+
+Related: whether Claude artifacts expire , sharing one with someone who has no Claude account , and the rest of the AI-made HTML cluster .
 
 ---
 
@@ -848,54 +1131,168 @@ Related: track any HTML deck , reveal.js deck analytics , and proposal tracking 
 
 DocSend Alternative for HTML Files (2026) | HTMLRadar HTMLRadar · Compare
 The DocSend alternative for HTML files.
-Updated August 2026
-HTMLRadar is an open-source DocSend alternative for HTML files. Upload an HTML deck, brief or proposal, or paste a URL you already host, send a tracked link, and see who opened it, which sections they read and for how long. AGPL-3.0, self-hostable, free for two tracked links, then $15 a month or $150 a year.
+Competitor facts checked 21 September 2026
+Stay with DocSend if what you send is a PDF, a PowerPoint or a Keynote, or if you need data rooms, e-signature or enterprise access controls, because HTMLRadar has none of those. Use HTMLRadar if the thing you send is an HTML deck, brief or proposal: DocSend does not accept .html as an upload, and HTMLRadar keeps the page as a page and reports which sections each recipient read and for how long.
 
-DocSend is an established document-tracking product, and it supports PDFs, presentations, documents, media, and spreadsheets. HTMLRadar is different on purpose: it tracks HTML files and URLs, and it is open source and self-hostable. If you send HTML decks, that difference matters. If you do not, DocSend may be the better fit.
+DocSend is an established document-tracking product owned by Dropbox, and it is good at what it does. This page is not an argument that it is worse. It is an answer to one narrow question: what do you do when the document you want to track is a web page rather than a file?
 The headline difference
 HTMLRadar
-HTML-first, open source, $15/mo or $150/yr flat.
-Track HTML decks from Claude, ChatGPT, v0, reveal.js, or hand-rolled HTML. Self-host the whole thing or use the hosted plan. AGPLv3.
+HTML-first, open source, $15 a month flat.
+Track HTML decks from Claude, ChatGPT, v0, reveal.js, or hand-written HTML. Self-host the whole thing or use the hosted plan. AGPL-3.0, one price, no per-seat charge.
 
 DocSend
-Multi-format document tracking.
-A hosted product for PDFs, presentations, documents, media, and spreadsheets. It does not list HTML among its accepted upload formats.
+File tracking, data rooms and e-signature.
+A hosted product for PDFs, presentations, documents, media and spreadsheets, with data rooms, unlimited e-signature, NDAs and dynamic watermarking on its higher plans. Its accepted-file list does not include .html.
 
-Where the products differ
+What happens when you upload an HTML file
+This is the part most comparison pages skip, so here it is plainly, from DocSend’s own help centre as it read on 21 September 2026 .
+In DocSend
+DocSend’s list of accepted uploads covers PDF, PowerPoint, Word, Keynote, images, audio, video and spreadsheets. Neither .html nor .htm appears on it, and neither appears on the separate download-only list, which covers .rtf, .txt and archive formats. So there is no route that turns an HTML file into a DocSend document.
+If the page is already published somewhere public, DocSend can track a link to it through its external URL links feature. What you get back is the visitor’s device and operating system, their approximate location and the time of the visit. The feature is on paid plans only and is switched off during the trial.
+
+In HTMLRadar
+You drop the .html file in, or paste a URL you already host. The page stays a page: fonts, layout, links and interactions all still work for the recipient.
+Each recipient gets their own link, and the report tells you which headings or slides they read and how long they stayed on each. Knowing someone spent four minutes on the Ask slide is a different piece of information from knowing they reached eighty per cent of the scroll.
+
+If what you actually have is a PDF, you do not have to pick a side yet. Convert a PDF deck into a single HTML page for free in your browser — no account needed to convert and download — and then decide which tracker suits the result.
+
+Side by side
+DocSend column checked against docsend.com and the DocSend help centre on 21 September 2026 .
 Feature HTMLRadar DocSend
-Source format HTML files or public URLs PDF, presentations, documents, media, and spreadsheets
-Open source AGPL-3.0 No
-Deployment Own Cloudflare and Supabase accounts Hosted service
-Reading analysis Section-level dwell Page-based analytics
-License audit Read the tracker source No
+Upload an .html file Yes — HTML is the main input Not on the accepted-file list
+Accepted uploads HTML files, or a URL you already host PDF, PowerPoint, Word, Keynote, images, audio, video, spreadsheets
+Page-by-page reading data Per section of the HTML page, per recipient PDF, Word, PowerPoint, Google Docs, Google Slides and Keynote
+Tracking a web page you host Full section-level reading Device, location and visit time only, on a paid plan
+Free plan 2 tracked links, full analytics on both No free plan; 14-day trial of Advanced Data Rooms
+Entry price $15 a month, or $150 a year, unlimited links $30 per user per month on Standard
+Data rooms No Spaces, from the Advanced plan upwards
+E-signature No Unlimited signature requests on every plan
+NDAs, watermarking, SSO No On Advanced and above; SSO listed as an add-on
+Open source AGPL-3.0, whole repository No
+Self-hosting Your own Cloudflare and Supabase accounts Hosted service only
+
+What each one costs
+Prices as published on 21 September 2026 , billed monthly. DocSend lists three plans: Standard at $30 per user per month with one user included, Advanced at $150 a month with three users included, and Advanced Data Rooms at $180 a month with three users included. Paying yearly is advertised as saving up to 40 per cent. There is no free plan; there is a 14-day free trial of Advanced Data Rooms.
+HTMLRadar is $15 a month or $150 a year for unlimited tracked links, with no per-seat charge, and a free plan that covers two tracked links with the same section-level analytics as Pro. A custom domain for your tracked links is included in Pro at no extra charge, which is one CNAME record and then decks.yourcompany.com/r/acme-proposal instead of htmlradar.page. The full breakdown is on the HTMLRadar pricing page .
+The comparison is not like for like, and we would rather say so than pretend otherwise. DocSend’s price buys a data room, e-signature and enterprise controls. HTMLRadar’s price buys HTML tracking and nothing else.
 
 When DocSend is the right choice
-You send PDFs, presentations, office documents, media, or spreadsheets rather than HTML.
-You need a mature hosted product built around broader document sharing.
-You prefer not to think about open source licensing or self-hosting at all. Fair.
+You send PDFs, presentations, office documents, media or spreadsheets, and you want page-by-page reading data on those formats. That is exactly what DocSend is built for.
+You need a data room. DocSend calls them Spaces, they arrive on the Advanced plan, and its top plan adds group permissions, audit logs, due diligence tracking and automatic file indexing. HTMLRadar has no data room at all.
+You need documents signed. DocSend includes unlimited e-signature on every plan. HTMLRadar does not do e-signature.
+You need NDAs and gating agreements, dynamic watermarking, visitor allow and block lists, tiered admin roles or single sign-on. DocSend lists all of these on its higher plans. HTMLRadar has none of them.
+You would rather not think about open-source licensing or self-hosting. Fair.
 
 When HTMLRadar is the right choice
-You send HTML decks (Claude artifacts, reveal.js builds, hand-rolled pages) and want to keep them as HTML when you track them.
-You want to read the tracker code or run the product in your own Cloudflare and Supabase accounts.
-You want section-level dwell time, not just scroll depth. Knowing the recipient spent 4 minutes on the Ask slide is materially different from knowing they scrolled to 80%.
+You send HTML decks — Claude artifacts, reveal.js builds, hand-written pages — and you want them to stay HTML when you track them.
+You want to read the tracker code, or run the whole product in your own Cloudflare and Supabase accounts. HTMLRadar is AGPL-3.0 across the whole repository.
+You want to know which section held attention, per recipient, rather than a single scroll-depth number.
+You are one person or a small team and a per-seat price does not suit you. One flat price covers unlimited links.
+
+When not to choose HTMLRadar
+HTMLRadar is a young product with a narrow job, and there are cases where it is the wrong tool. Do not choose it if you need a data room, e-signature, NDAs and gating agreements, dynamic watermarking, single sign-on or tiered administrative roles: it has none of those. Do not choose it if your source of truth is a PDF or an office file that will never become a web page, because attachments ride along under a tracked link but the section-level reading data is for HTML. And do not choose it if you need a vendor with a long compliance history behind it; DocSend is a Dropbox product and HTMLRadar is not.
 
 Migrating from DocSend
-HTMLRadar does not import existing DocSend files. For new HTML decks, bring a Claude artifact, reveal.js build, or hand-written page; upload it to HTMLRadar; and create per-recipient share links. The workflow stays in HTML from start to finish.
+HTMLRadar does not import existing DocSend files. For new HTML decks, bring a Claude artifact, reveal.js build, or hand-written page; upload it to HTMLRadar; and create per-recipient share links. The workflow stays in HTML from start to finish. The free HTMLRadar tools for turning HTML and Claude artifacts into links are the quickest way to see what a recipient will get.
 If you need help with the cutover, email [email protected] and we'll walk through it. Free.
 
 Common questions
-Is HTMLRadar a free DocSend alternative?
-The hosted free tier covers 2 tracked links with full section-level analytics. Past that it is $15/mo flat, or $150/yr if you pay annually — which also lets you name your own links, so a client receives htmlradar.page/r/acme-proposal rather than a random string. Or self-host the AGPL-3.0 source for free on your own infrastructure.
+Can you upload an HTML file to DocSend?
+Not as a document. DocSend’s published list of accepted uploads, checked on 21 September 2026, covers PDF, PowerPoint, Word, Keynote, images, audio, video and spreadsheets, and its separate download-only list covers .rtf, .txt and archive formats. Neither list includes .html or .htm. If the page is already hosted publicly you can add it as an external URL link on a paid plan, but the visit data for those links is limited to the visitor’s device, location and the time of the visit.
+
+What is the best free DocSend alternative?
+DocSend has no free plan, only a 14-day trial, so any free alternative is a different product rather than a cheaper DocSend. HTMLRadar’s free plan covers 2 tracked links with the same section-level analytics as the paid plan and no credit card. Papermark’s free plan is more generous on link count — 50 links, with 30-day analytics retention — and is worth a look if your documents are PDFs. HTMLRadar is the one to try if your documents are HTML.
+
+How much does DocSend cost compared with HTMLRadar?
+On 21 September 2026 DocSend listed Standard at $30 per user per month, Advanced at $150 a month for three users, and Advanced Data Rooms at $180 a month for three users, billed monthly. HTMLRadar is $15 a month or $150 a year for unlimited tracked links with no per-seat charge. The plans are not equivalent: DocSend’s price includes data rooms, e-signature and enterprise controls that HTMLRadar does not have.
 
 Does HTMLRadar track PDFs like DocSend does?
-HTMLRadar is HTML-first. PDFs, spreadsheets, and ZIPs ride along as attachments under the same tracked link, with every download logged per recipient — but section-level dwell tracking is for HTML documents.
+Not in the same way. HTMLRadar is HTML-first. PDFs, spreadsheets and ZIPs ride along as attachments under the same tracked link, and every download is logged per recipient, but the section-level dwell tracking is for HTML documents. If you want a PDF deck tracked section by section, convert it at /convert first — that is free and runs in your browser.
 
-Can I self-host HTMLRadar?
-Yes. The full source is AGPL-3.0 on GitHub and runs in your own Cloudflare and Supabase accounts. The repository includes a self-hosting guide with the required setup steps.
+Can I self-host a DocSend alternative?
+Yes. HTMLRadar is AGPL-3.0 across the whole repository — tracker, proxy worker, schema and web app — and runs in your own Cloudflare and Supabase accounts, with a self-hosting guide in the repository. DocSend is a hosted service with no self-hosted option. Papermark is also open source, under AGPLv3 apart from its ee and app/(ee) directories, which carry a commercial licence.
+
+Does HTMLRadar support custom domains like DocSend’s branded subdomain?
+Yes, and it is included in Pro at $15 a month with no extra charge. You add one CNAME record and your links are served from your own subdomain, for example decks.yourcompany.com/r/acme-proposal. Tracking, email gates, passwords and expiry dates behave exactly as before, and links you have already sent keep working at the address they were issued on.
 
 Try HTMLRadar free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
 
-Related: HTMLRadar vs Papermark , DocSend vs Papermark compared , HTMLRadar vs Peony , HTMLRadar vs Stacktree , HTMLRadar vs Tiiny.host , HTMLRadar vs HummingDeck , self-hosted document tracking , and pitch deck tracking for founders .
+Related: HTMLRadar vs Papermark , DocSend vs Papermark compared , the free PDF-to-HTML converter , HTMLRadar pricing , tracked links on your own domain , HTMLRadar vs Peony , HTMLRadar vs Stacktree , HTMLRadar vs Tiiny.host , HTMLRadar vs HummingDeck , self-hosted document tracking , and pitch deck tracking for founders .
+
+---
+
+## https://htmlradar.com/compare/papermark
+
+Papermark Alternative for HTML Decks | HTMLRadar HTMLRadar · Compare
+The Papermark alternative for HTML decks.
+Competitor facts checked 21 September 2026
+Stay with Papermark if your documents are PDFs or office files, if you need a data room, or if a large free plan matters more than anything else — it gives you 50 links free where HTMLRadar gives you 2. Use HTMLRadar if the thing you send is an HTML deck, brief or proposal: Papermark’s supported-file list has one web entry, Notion URLs, and does not include .html, while HTMLRadar keeps the page as a page and reports which sections each recipient read.
+
+Papermark is a real open-source project with a real team behind it, and on most measures it is the broader product. We are not going to pretend otherwise. The difference that matters is narrow and specific: what the two of us do with a web page.
+What happens when you upload an HTML file
+In Papermark
+Papermark’s help centre lists the file types it supports: PDF, spreadsheets, presentations including Keynote, Word, images, CAD, ZIP, video, audio, Outlook .msg files and Google Earth files. Under “Web Content” there is one entry, Notion URLs. Neither .html nor .htm is on the list, so an HTML deck has no route in unless you convert it to something else first.
+
+In HTMLRadar
+You drop the .html file in, or paste a URL you already host. Fonts, layout, links and interactions all still work for the recipient. Each recipient gets their own link, and the report tells you which headings or slides they read and for how long.
+
+If the document you actually hold is a PDF, you do not have to choose yet. Convert a PDF deck into a single HTML page for free in your browser — no account needed to convert and download — and see whether the HTML version is the one you would rather send.
+
+Side by side
+Papermark column checked against papermark.com, its help centre and the papermark/papermark repository on 21 September 2026 . Papermark lists prices in euros and dollars; the euro prices are the ones its pricing page shows by default and the ones quoted here.
+Feature HTMLRadar Papermark
+Upload an .html file Yes — HTML is the main input Not on the supported-file list
+Supported uploads HTML files, or a URL you already host PDF, spreadsheets, presentations, Word, images, video, audio, .msg, CAD, ZIP, and Notion URLs
+Reading detail Which heading or slide of the HTML page, per recipient Page-by-page analytics on every plan
+Analytics retention Sessions and section events retained indefinitely, per our privacy page 30 days on Free, 1 year on Pro, 2 years on Business and Data Rooms
+Free plan 2 tracked links, full section-level analytics 50 links, 50 documents, 1 team member
+Entry paid price $15 a month, or $150 a year, unlimited links €24 a month for Pro
+Custom domain for links Included in Pro at $15 a month From the Business plan at €59 a month
+Data rooms None Yes — the Data Rooms plan, €99 a month, adds granular file permissions and NDA agreements
+Licence AGPL-3.0 across the whole repository AGPLv3 except the ee and app/(ee) directories, which are commercially licensed
+Self-hosting Your own Cloudflare and Supabase accounts Source is public; the self-hosted option and self-hosting support are listed as Enterprise
+
+What each one costs
+Prices as published on 21 September 2026 , billed monthly. Papermark lists a free plan at €0 with 50 links, 50 documents and one team member; Pro at €24 a month with unlimited links and custom branding; Business at €59 a month with three team members, a custom domain for documents and multi-file sharing; and Data Rooms at €99 a month with three team members, unlimited data rooms, NDA agreements and dynamic watermarking. Paying yearly is advertised as saving up to 35 per cent, and the Data Rooms plan offers a seven-day free trial.
+HTMLRadar is $15 a month or $150 a year for unlimited tracked links, with no per-seat charge, and a free plan of two tracked links carrying the same section-level analytics as Pro. A custom domain for your tracked links is included in Pro at no extra charge — one CNAME record, and then decks.yourcompany.com/r/acme-proposal instead of htmlradar.page. The full breakdown is on the HTMLRadar pricing page .
+Read plainly: Papermark’s free plan is much larger than ours, and if 50 free links is what decides it for you, take them. Where HTMLRadar comes out ahead on price is the paid tier, because a custom domain sits in Pro at $15 rather than on a €59 plan.
+
+Open source, on both sides
+Both products are open source, and the difference is in the fine print rather than in the headline. Papermark’s LICENSE file puts the repository under AGPLv3 with one carve-out: everything under its ee and app/(ee) directories carries a separate commercial licence. Its pricing page also lists the self-hosted option, and support for self-hosting, as Enterprise lines.
+HTMLRadar is AGPL-3.0 across the whole repository — tracker, proxy worker, schema and web app — with no separately licensed directory, and the self-hosting guide is in the repository for anyone who wants to run it in their own Cloudflare and Supabase accounts. Whether that matters depends entirely on what you intend to do with the code. See how self-hosted document tracking works .
+
+When to use each product
+Use HTMLRadar
+You already send HTML. You want to keep it as HTML, create per-recipient links, and see which headings or slides held attention. You want one flat price with no per-seat charge, and a custom domain without moving up two tiers.
+
+Use Papermark
+Your documents are PDFs or office files, you need a data room with granular file permissions and NDA agreements, you have a team to add, or you want the largest free plan of the two. Papermark covers all of that and HTMLRadar covers none of it.
+
+When not to choose HTMLRadar
+HTMLRadar has a narrow job and there are cases where it is the wrong tool. Do not choose it if you need a data room, granular per-file permissions, NDA agreements, dynamic watermarking, screenshot protection or single sign-on: Papermark lists all of those and HTMLRadar has none of them. Do not choose it if your source of truth is a PDF or an office file that will never become a web page, because attachments ride along under a tracked link but the section-level reading data is for HTML. And if the deciding factor is how much you get for nothing, Papermark’s 50 free links beat our 2 and we are not going to argue the point.
+
+Common questions
+Can you upload an HTML file to Papermark?
+Not as a document. Papermark’s published list of supported file types, checked on 21 September 2026, covers PDF, spreadsheets, presentations, Word, images, CAD, ZIP, video, audio, Outlook .msg and Google Earth files. Its one web entry is Notion URLs. Neither .html nor .htm appears on the list. HTMLRadar takes the .html file directly, or a URL you already host, and keeps it as a page for the recipient.
+
+Is Papermark or HTMLRadar the better open-source DocSend alternative?
+They answer different questions. Papermark is the broader product: document sharing, data rooms, page-by-page analytics on office files, and a much larger free plan at 50 links. HTMLRadar is narrow: it tracks HTML pages section by section. If your documents are PDFs and you want a data room, Papermark is the stronger choice. If your documents are HTML decks, briefs or proposals, Papermark has no path for them and HTMLRadar does.
+
+How much does Papermark cost compared with HTMLRadar?
+On 21 September 2026 Papermark listed, in euros and billed monthly, a free plan at €0, Pro at €24 a month, Business at €59 a month with three team members, and Data Rooms at €99 a month with three team members. HTMLRadar is $15 a month or $150 a year for unlimited tracked links with no per-seat charge, plus a free plan of 2 tracked links. Papermark’s free plan is far more generous on link count; HTMLRadar’s paid plan is cheaper and includes a custom domain that Papermark puts on its €59 tier.
+
+Is Papermark fully open source?
+Almost. Its LICENSE file, read on 21 September 2026, puts the repository under AGPLv3 with one carve-out: everything under the ee and app/(ee) directories is under a separate commercial licence. Its pricing page also lists the self-hosted option and self-hosting support as Enterprise lines. HTMLRadar is AGPL-3.0 across the whole repository with no separately licensed directory, and the self-hosting guide is in the repository for anyone.
+
+Which should I choose for a pitch deck?
+It depends on what the deck is. If it exists as a PDF or a PowerPoint and always will, Papermark will track it page by page and HTMLRadar will not. If it exists as HTML — a Claude artifact, a reveal.js build, a page you wrote — then converting it to a PDF just to track it throws away the layout and interactions you built, and HTMLRadar tracks the page as it is. If you have a PDF and want to try the HTML route, the free converter at /convert turns a landscape PDF deck into one HTML page in your browser.
+
+Does HTMLRadar have data rooms?
+No. HTMLRadar tracks one document per link, with attachments that ride along under the same link. There is no folder structure, no group permissions and no due-diligence workflow. If you need a data room, Papermark has one — its Data Rooms plan at €99 a month adds granular file permissions, NDA agreements and data-room analytics — and that is the honest answer.
+
+Track an HTML deck free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
+
+Related: HTMLRadar vs DocSend , DocSend vs Papermark compared , the free PDF-to-HTML converter , free tools for turning HTML into a link , HTMLRadar pricing , tracked links on your own domain , self-hosted document tracking , and track an HTML deck .
 
 ---
 
@@ -941,7 +1338,8 @@ HTMLRadar (ours) htmlradar.com/r/lumenforge-demo , which now redirects to htmlra
 
 Checked on 30 August 2026. Every cell in this table comes from a recorded network log, a document.cookie read or a DOM capture inside the fifteen-second window described above. Two facts elsewhere in this piece come from outside that window, and both are labelled where they appear: HTMLRadar's heartbeat calls, which come from the separate 55-second run, and the Cloudflare zone setting on htmlradar.com , which we read from our own Cloudflare account. "None observed" means exactly that - not observed on this link, in this window, by this method.
 Re-checked on 31 August 2026. Vendors change things, so all seven links were opened again on 31 August 2026 with the same script, the same viewport and the same fifteen-second window. The findings summarized in the table held. DocSend made the same advertising requests and wrote __Secure-dbx_consent with all five categories true and "userInteracted":false while the banner sat untouched. Peony attempted a Mixpanel Session Replay upload through app.peony.ink/mp/record , answered 402 . Papermark showed one non-first-party host and one visible cookie. Stacktree returned an empty document.cookie and one cloudflareinsights request blocked by its own policy. Tiiny.host returned an empty cookie and empty storage, with Plausible served from analytics.tiiny.site . HummingDeck loaded the same Calendly frame, the same 24 non-first-party hosts and the same img.logo.dev request. Four differences, all small: Peony attempted one replay upload instead of two, Tiiny.host's Plausible script loaded but sent no /api/event POST inside the window, per-page request totals moved by a handful either way as image loads vary run to run, and HTMLRadar's own row changed for reasons given in its own section below. The counts in the table are the ones recorded on 30 August, which is the date the table carries.
-Checked again ahead of publication. A further check on 2 September 2026 found Peony's Mixpanel Session Replay upload answered 200 , not the 402 recorded on 30 and 31 August: the upload that had been stalling behind a payment gate went through this time. Everything else held. This piece re-runs the same check once more immediately before publishing, so this line is updated again if that changes.
+Checked again ahead of publication. A further check on 2 September 2026 found Peony's Mixpanel Session Replay upload answered 200 , not the 402 recorded on 30 and 31 August: the upload that had been stalling behind a payment gate went through this time. Everything else held.
+Final run, 7 September 2026. All seven links were opened once more on 7 September 2026, the day before this piece was posted to Hacker News, with the same script and the same fifteen-second window. It found no change from the findings published here: every host, cookie name and storage key recorded above was still present, none had been added, and Peony's Session Replay upload still answered 200 . The capture script and the raw JSON for the 31 August and 7 September runs are in the repository, with cookie values, credentials and identifiers redacted: github.com/htmlradar/htmlradar/tree/main/docs/evidence .
 
 Product by product
 DocSend
@@ -1071,5 +1469,6 @@ One remote procedure call to our own Supabase project inside the fifteen-second 
 How can I check what a shared document link loads in my own browser?
 Open the link and read your browser Network and Application tabs. That is a weaker version of the method used here, and it has a limit worth knowing: reading document.cookie misses HttpOnly cookies and anything set inside a cross-origin frame, so it undercounts what was written.
 
+Try the free PDF-deck converter to download a web page or create a tracked link after sign-in.
 The launch piece explains why HTMLRadar exists: decks moved to HTML, so I built the read tracking .
 ← Back to home

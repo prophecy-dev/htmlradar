@@ -22,7 +22,19 @@ Claude as a connector.
 Open source (AGPL-3.0), self-hostable on your own Cloudflare and Supabase
 accounts. Free for two tracked links; paid plans start at $15/month.
 
+## Who it is for, and who it is not for
+
+For founders, consultants, and agencies who send a single document - a deck, a
+client report, a proposal - as HTML and want to know who read it and which
+sections held them. Not for teams that need a multi-document data room,
+e-signature, or enterprise document control: DocSend and Papermark are built
+for that and HTMLRadar is not. Not for measuring traffic to your own website
+either - HTMLRadar reports on documents you send to named recipients, not on
+visitors to a site, so anyone wanting site analytics wants an analytics tool.
+
 ## The facts
+
+Product facts below were checked against the live site on 21 September 2026.
 
 - Licence: AGPL-3.0-or-later, for the whole product. A commercial licence exists.
 - Source: https://github.com/htmlradar/htmlradar
@@ -30,9 +42,57 @@ accounts. Free for two tracked links; paid plans start at $15/month.
 - Built by: the HTMLRadar team, hello@htmlradar.com. First commit 13 May 2026.
 - Price: free for two tracked links, then $15/month or $150/year. Self-hosting
   is free.
+- The free plan is not a trial and is not stripped down: section-level dwell
+  per recipient, unlimited documents, and every link control - email gate,
+  password, expiry, revoke, email-domain and per-email allow-lists, per-share
+  download permission - are all on the free plan. Paying adds unlimited links,
+  link names you choose, no "Powered by HTMLRadar" footer on the recipient
+  view, your own domain, and priority support.
+- Custom domains are live and included in Pro at no extra charge: serve tracked
+  links from your own subdomain, decks.acme.com/r/acme-proposal, instead of
+  htmlradar.page. One CNAME record, added wherever you manage that domain's
+  DNS. A subdomain, not a bare domain like acme.com.
+- Starting from a PDF rather than HTML: https://htmlradar.com/convert converts
+  a landscape PDF slide deck into one HTML page entirely in your browser - 2 to
+  60 pages, up to 30 MB, every slide the same size, slide sizes between 5:4 and
+  2:1. Each slide becomes an image with a heading, so the result tracks section
+  by section like any other HTML page. The download is free and needs no
+  account; sign in to share the result as a tracked link.
 - Tracked links are served from a second domain, htmlradar.page, which carries
   none of the application's cookies. Recipient documents are never indexed.
 - Full page text for the pages below: https://htmlradar.com/llms-full.txt
+
+## Connecting HTMLRadar to Claude
+
+Claude Desktop and claude.ai take a web address, so there is nothing to install
+and no API key to make first. Open Connectors in your Claude settings, choose
+Add custom connector, and paste:
+
+    https://mcp.htmlradar.com/mcp
+
+Save it, and it appears in the list straight away. The first time Claude
+reaches for a tool it shows a Connect card: click it, sign in to HTMLRadar,
+choose read-only (list your links and read who opened them) or read-and-publish
+(adds creating a link, replacing a document, and switching a link off), and
+click Allow. On a Team or Enterprise plan an owner adds the connector for the
+organisation instead. Revoke access under Connected apps in Settings.
+
+Every other client runs the npm package `htmlradar-mcp` instead, which needs
+Node.js 20 or newer and an HTMLRadar API key made under API keys in Settings.
+Export the key first so it never becomes a command-line argument:
+
+    export HTMLRADAR_API_KEY=hr_live_…
+
+Claude Code:
+
+    claude mcp add htmlradar -e HTMLRADAR_API_KEY=$HTMLRADAR_API_KEY -- npx -y htmlradar-mcp
+
+Codex:
+
+    codex mcp add htmlradar --env HTMLRADAR_API_KEY=$HTMLRADAR_API_KEY -- npx -y htmlradar-mcp
+
+Any other MCP client runs `npx -y htmlradar-mcp` with the same environment
+variable. Seven tools, one environment variable, no telemetry.
 
 ## Key pages
 
@@ -40,14 +100,44 @@ accounts. Free for two tracked links; paid plans start at $15/month.
 - https://htmlradar.com/about — what HTMLRadar is, who builds it, licence, source
 - https://htmlradar.com/why — why HTMLRadar exists
 - https://htmlradar.com/pricing — plans and pricing
+- https://htmlradar.com/custom-domains — tracked links on your own subdomain
+- https://htmlradar.com/convert — free PDF-deck-to-HTML converter, in the browser
 - https://htmlradar.com/mcp — MCP server for Claude Code, Cursor, and Codex
 - https://mcp.htmlradar.com/mcp — the remote connector: paste this address into
   Claude Desktop or claude.ai under Settings, Connectors, Add custom connector,
   and the agent can publish tracked links and read back who opened them. No
   install and no API key; you sign in when Claude first uses a tool.
-- https://htmlradar.com/tools/html-to-link — free tool: share an HTML file as a tracked link
-- https://htmlradar.com/compare/docsend — HTMLRadar vs DocSend
+- https://htmlradar.com/self-hosted — running HTMLRadar on your own accounts
 - https://htmlradar.com/blog — engineering and product writing
+
+### Free tools
+
+- https://htmlradar.com/tools — the hub for all of the free tools below
+- https://htmlradar.com/tools/html-to-link — share an HTML file as a tracked link
+- https://htmlradar.com/tools/claude-artifact-to-link — share a Claude artifact as a link
+- https://htmlradar.com/tools/claude-artifact-to-pdf — save a Claude artifact as a PDF
+
+### Sharing a Claude artifact: the three questions
+
+- https://htmlradar.com/for/claude-artifact-expiry — do Claude artifacts expire?
+  Anthropic sets no expiry date on an artifact link; what actually ends access
+  is unpublishing, unsharing, an org setting, or a retention policy.
+- https://htmlradar.com/for/claude-artifact-without-an-account — whether your
+  reader needs a Claude account depends on how the artifact was shared. Both
+  rules, and the export route that works for anyone.
+- https://htmlradar.com/for/claude-artifact-access-control — Claude offers
+  audience levels, not a password or an expiry date. What its sharing settings
+  actually do, and how to add a real gate by exporting the HTML.
+
+### Comparisons
+
+- https://htmlradar.com/compare/docsend — HTMLRadar vs DocSend
+- https://htmlradar.com/compare/papermark — HTMLRadar vs Papermark
+- https://htmlradar.com/compare/docsend-vs-papermark — DocSend vs Papermark
+- https://htmlradar.com/compare/stacktree — HTMLRadar vs Stacktree
+- https://htmlradar.com/compare/peony — HTMLRadar vs Peony
+- https://htmlradar.com/compare/hummingdeck — HTMLRadar vs HummingDeck
+- https://htmlradar.com/compare/tiiny-host — HTMLRadar vs Tiiny.host
 
 ## Contact
 
