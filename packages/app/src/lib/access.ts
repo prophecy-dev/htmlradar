@@ -4,9 +4,10 @@
 // Order of trust:
 //   1. ACCESS_TEAM_DOMAIN + ACCESS_AUD set → the Cf-Access-Jwt-Assertion header
 //      must verify against the team's certs; its e-mail claim is the user.
-//   2. Not configured → the cf-access-authenticated-user-email header. Only
-//      safe when nothing but Access can reach the app; configure (1) for prod.
-//   3. Neither → DEV_USER_EMAIL, for `next dev`.
+//   2. Not configured, and ACCESS_INSECURE_DEV=1 → the
+//      cf-access-authenticated-user-email header, else DEV_USER_EMAIL. For
+//      `next dev` only: anyone can send that header.
+//   3. Otherwise nobody gets in. A deploy that forgets (1) is locked, not open.
 // Then ALLOWED_EMAIL_DOMAINS (comma-separated), when set, must match.
 
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -56,7 +57,7 @@ export async function resolveAccessEmail(headers: Headers, env: Env): Promise<Ac
     } catch {
       return { ok: false, reason: 'unauthenticated' };
     }
-  } else {
+  } else if (env('ACCESS_INSECURE_DEV') === '1') {
     email = headers.get('cf-access-authenticated-user-email') || env('DEV_USER_EMAIL') || null;
   }
   if (!email) return { ok: false, reason: 'unauthenticated' };

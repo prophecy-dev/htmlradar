@@ -25,11 +25,11 @@ request without a valid key.
 pnpm install
 cd packages/app
 npx wrangler d1 migrations apply htmlradar --local   # D1 simulation under .wrangler/state
-DEV_USER_EMAIL=you@somnia.network SESSION_SECRET=dev-secret pnpm dev
+ACCESS_INSECURE_DEV=1 DEV_USER_EMAIL=you@somnia.network SESSION_SECRET=dev-secret pnpm dev
 ```
 
 `next dev` gets local D1 and R2 through `setupDevPlatform()` (see `next.config.mjs`).
-Without Access in front, `DEV_USER_EMAIL` is who you are — never set it in production.
+Without Access configured (`ACCESS_TEAM_DOMAIN` + `ACCESS_AUD`) the app refuses everyone, unless `ACCESS_INSECURE_DEV=1` — local development only; it trusts a header anyone can send.
 
 On native Windows, `next dev` (14.2) fails to render any edge-runtime page that uses a
 client component (`resolveClientReference … reading 'default'`), even a two-line one;

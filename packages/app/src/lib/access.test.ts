@@ -21,16 +21,29 @@ describe('emailAllowed', () => {
 });
 
 describe('resolveAccessEmail without JWT verification configured', () => {
+  it('refuses everyone unless ACCESS_INSECURE_DEV=1', async () => {
+    const headers = new Headers({ 'cf-access-authenticated-user-email': 'ann@somnia.network' });
+    expect(await resolveAccessEmail(headers, env({ DEV_USER_EMAIL: 'dev@x.io' }))).toEqual({
+      ok: false,
+      reason: 'unauthenticated',
+    });
+  });
+
   it('trusts the Access e-mail header and lowercases it', async () => {
     const headers = new Headers({ 'cf-access-authenticated-user-email': 'Ann@Somnia.Network' });
-    expect(await resolveAccessEmail(headers, env({}))).toEqual({
+    expect(await resolveAccessEmail(headers, env({ ACCESS_INSECURE_DEV: '1' }))).toEqual({
       ok: true,
       email: 'ann@somnia.network',
     });
   });
 
   it('falls back to DEV_USER_EMAIL, and refuses when there is nothing', async () => {
-    expect(await resolveAccessEmail(new Headers(), env({ DEV_USER_EMAIL: 'dev@x.io' }))).toEqual({
+    expect(
+      await resolveAccessEmail(
+        new Headers(),
+        env({ ACCESS_INSECURE_DEV: '1', DEV_USER_EMAIL: 'dev@x.io' }),
+      ),
+    ).toEqual({
       ok: true,
       email: 'dev@x.io',
     });
@@ -43,7 +56,10 @@ describe('resolveAccessEmail without JWT verification configured', () => {
   it('refuses an address outside ALLOWED_EMAIL_DOMAINS', async () => {
     const headers = new Headers({ 'cf-access-authenticated-user-email': 'x@gmail.com' });
     expect(
-      await resolveAccessEmail(headers, env({ ALLOWED_EMAIL_DOMAINS: 'somnia.network' })),
+      await resolveAccessEmail(
+        headers,
+        env({ ACCESS_INSECURE_DEV: '1', ALLOWED_EMAIL_DOMAINS: 'somnia.network' }),
+      ),
     ).toEqual({ ok: false, reason: 'forbidden' });
   });
 });
