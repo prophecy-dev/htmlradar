@@ -33,8 +33,7 @@ let captured: FlushPayload | null = null;
 function makeConfig(): TrackerConfig {
   return {
     ...DEFAULTS,
-    supabaseUrl: 'https://example.test',
-    supabaseAnonKey: 'anon',
+    endpoint: 'https://example.test',
     shareSlug: 'test-slug',
     // beforeFlush returning false short-circuits the network call, and hands
     // us the exact payload the tracker would have sent.

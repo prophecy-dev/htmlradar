@@ -1,14 +1,19 @@
 import type { FlushPayload, Geo } from './types.js';
 
-// Hand-rolled PostgREST RPC client.
-// Reasons we don't pull @supabase/supabase-js:
-//   - We use ~5% of its surface (two RPCs).
-//   - Dropping the dep saves ~25KB gzipped vs. our entire tracker budget.
-//   - keepalive on unload (audit fix F-17) is trivial here, awkward through the SDK.
+// The tracker's two calls, to the proxy worker that served the document:
+//   POST {endpoint}/t/start_session
+//   POST {endpoint}/t/update_session
+// Same request bodies and P-code errors the Postgres RPCs used, so the gate's
+// messages still map (see humanError in index.ts).
+//
+// text/plain, not application/json: a proxy-served document runs in an
+// opaque (sandboxed) origin, so every call is cross-origin. A text/plain POST
+// is a "simple" request with no CORS preflight, which also keeps the
+// keep-alive report on unload working in browsers that refuse keepalive with
+// a preflight. The worker parses the body as JSON regardless.
 
 export interface RpcOptions {
-  supabaseUrl: string;
-  anonKey: string;
+  endpoint: string;
 }
 
 export interface StartSessionInput {
@@ -39,19 +44,13 @@ export class RpcError extends Error {
 }
 
 export function createTransport(opts: RpcOptions) {
-  const rpcUrl = (name: string) => `${opts.supabaseUrl}/rest/v1/rpc/${name}`;
-
-  const headers = (extra: Record<string, string> = {}): Record<string, string> => ({
-    apikey: opts.anonKey,
-    Authorization: `Bearer ${opts.anonKey}`,
-    'Content-Type': 'application/json',
-    ...extra,
-  });
+  const rpcUrl = (name: string) => `${opts.endpoint.replace(/\/+$/, '')}/t/${name}`;
 
   async function call(rpc: string, body: object, keepalive = false): Promise<unknown> {
     const res = await fetch(rpcUrl(rpc), {
       method: 'POST',
-      headers: headers(),
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      credentials: 'omit',
       body: JSON.stringify(body),
       keepalive,
     });
@@ -107,8 +106,8 @@ export function createTransport(opts: RpcOptions) {
 }
 
 function extractCode(body: string): string | null {
-  // PostgREST surfaces our `raise exception ... using errcode = 'P0001'` as a JSON object
-  // with `code` or `message`. We don't want to depend on a particular shape, so try a few.
+  // The worker answers a refusal with `{ code: 'P0001', message: 'rate_limited' }`, the
+  // same shape PostgREST used. Don't depend on a particular shape, so try a few.
   try {
     const parsed = JSON.parse(body) as { code?: string; message?: string };
     if (parsed.code) return parsed.code;
