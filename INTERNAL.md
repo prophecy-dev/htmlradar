@@ -7,7 +7,7 @@ The changes from upstream:
 - **Cloudflare only.** D1 replaces Supabase (`packages/db`: one schema, and TS in place of
   the Postgres RPCs/triggers). R2 holds the documents. **Cloudflare Email Service**
   (`send_email` binding) replaces Resend. Telegram carries optional first-read alerts.
-- **Privy e-mail login, @somnia.foundation only.** No passwords, billing, billing, marketing site, custom domains,
+- **Privy login (Google or e-mail code), @somnia.foundation only.** No passwords, billing, marketing site, custom domains,
   handles, MCP connector or monitor worker.
 - **Recipient-side additions:** Open Graph unfurl cards (a per-document description and
   image), unfurl bots served a card-only page (no session, no alert), a `/privacy` page and a
@@ -49,5 +49,5 @@ NEXT_PUBLIC_SHARE_ORIGIN=<share origin> pnpm --filter @htmlradar/app deploy
 
 The dashboard **refuses everyone** until `SESSION_SECRET` and `PRIVY_APP_ID` are set on the
 `htmlradar-app` Worker (`wrangler secret put`). The Privy app must allow the dashboard's
-origin, have e-mail login on and return user data in the identity token. Only
+origin, have Google and e-mail login on and return user data in the identity token. Only
 `ALLOWED_EMAIL_DOMAINS` (default `somnia.foundation`) get in.

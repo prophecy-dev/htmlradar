@@ -41,10 +41,14 @@ export async function POST(req: NextRequest) {
   if (typeof token !== 'string' || !token) {
     return NextResponse.json({ error: 'missing_token' }, { status: 400 });
   }
-  const email = await verifyPrivyIdentityToken(token, appId);
-  if (!email) return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
-  if (!emailAllowed(email, allowedDomains(envVar))) {
-    return NextResponse.json({ error: 'email_not_allowed', email }, { status: 403 });
+  const emails = await verifyPrivyIdentityToken(token, appId);
+  if (!emails) return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
+  const email = emails.find((e) => emailAllowed(e, allowedDomains(envVar)));
+  if (!email) {
+    return NextResponse.json(
+      { error: 'email_not_allowed', email: emails[0] ?? null },
+      { status: 403 },
+    );
   }
   const res = NextResponse.json({ ok: true, email });
   res.cookies.set(SESSION_COOKIE, await signSession(email, secret), {

@@ -1,6 +1,6 @@
 'use client';
 
-// Privy e-mail login for the dashboard. Once Privy has signed the user in, the
+// Privy login for the dashboard: an e-mail code, or Google. Once Privy has signed the user in, the
 // identity token goes to /api/auth/session, which checks the address and sets
 // our session cookie. Anyone refused there is signed out of Privy again, so
 // they can try another address.
@@ -21,7 +21,7 @@ export default function PrivyLogin({
     <PrivyProvider
       appId={appId}
       config={{
-        loginMethods: ['email'],
+        loginMethods: ['google', 'email'],
         embeddedWallets: { ethereum: { createOnLogin: 'off' }, solana: { createOnLogin: 'off' } },
         appearance: { theme: 'light', showWalletLoginFirst: false },
       }}
@@ -104,11 +104,11 @@ function LoginFlow({ next, signout }: { next: string; signout: boolean }) {
         disabled={busy}
         onClick={() => {
           setError(null);
-          login({ loginMethods: ['email'] });
+          login({ loginMethods: ['google', 'email'] });
         }}
         className="rounded-md bg-ink px-5 py-2.5 text-sm text-paper hover:bg-signal-dark disabled:opacity-50"
       >
-        {signingOut ? 'Signing out…' : authenticated ? 'Signing in…' : 'Sign in with e-mail'}
+        {signingOut ? 'Signing out…' : authenticated ? 'Signing in…' : 'Sign in'}
       </button>
       {error && <p className="mt-4 text-[14px] text-red-700">{error}</p>}
     </div>

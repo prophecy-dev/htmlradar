@@ -1,12 +1,12 @@
-// Who is asking. Dashboard sign-in is Privy e-mail login, turned into our own
+// Who is asking. Dashboard sign-in is Privy (e-mail code or Google), turned into our own
 // short-lived session cookie. No database, so the middleware can use it as
 // well as server components.
 //
 // Flow:
-//   1. /login runs Privy (e-mail OTP only). Once signed in, the page posts the
+//   1. /login runs Privy (e-mail code or Google). Once signed in, the page posts the
 //      Privy identity token to /api/auth/session.
 //   2. verifyPrivyIdentityToken checks it against the app's JWKS and reads the
-//      e-mail from its linked accounts. If that e-mail is allowed, the route sets
+//      e-mails from its linked accounts. If one of them is allowed, the route sets
 //      the SESSION_COOKIE, an HMAC over the e-mail and an expiry.
 //   3. Every request after that only verifies the cookie (resolveAccessEmail).
 //
@@ -54,38 +54,43 @@ export function emailAllowed(email: string, domains: string): boolean {
   return list.includes(domain);
 }
 
-// The e-mail from a Privy identity token's `linked_accounts` claim, which Privy
-// signs as either an array or a JSON string of one. Only an e-mail account
-// counts: that is the address the user proved with the one-time code.
-export function emailFromLinkedAccounts(raw: unknown): string | null {
+// The e-mails from a Privy identity token's `linked_accounts` claim, which
+// Privy signs as either an array or a JSON string of one. Two account types
+// count: `email` (the address the user proved with a one-time code) and
+// `google_oauth` (the address Google signed in). Every other type is ignored,
+// even when it carries an e-mail-looking field.
+export function emailsFromLinkedAccounts(raw: unknown): string[] {
   let accounts: unknown = raw;
   if (typeof raw === 'string') {
     try {
       accounts = JSON.parse(raw);
     } catch {
-      return null;
+      return [];
     }
   }
-  if (!Array.isArray(accounts)) return null;
+  if (!Array.isArray(accounts)) return [];
+  const out: string[] = [];
   for (const a of accounts) {
-    if (a && typeof a === 'object' && (a as { type?: unknown }).type === 'email') {
-      const address = (a as { address?: unknown }).address;
-      if (typeof address === 'string' && address.includes('@')) return address.trim().toLowerCase();
-    }
+    if (!a || typeof a !== 'object') continue;
+    const { type, address, email } = a as { type?: unknown; address?: unknown; email?: unknown };
+    const value = type === 'email' ? address : type === 'google_oauth' ? email : null;
+    if (typeof value === 'string' && value.includes('@')) out.push(value.trim().toLowerCase());
   }
-  return null;
+  return out;
 }
 
+// The verified e-mails of the token's user, or null when the token is not a
+// valid identity token for this Privy app.
 export async function verifyPrivyIdentityToken(
   token: string,
   appId: string,
-): Promise<string | null> {
+): Promise<string[] | null> {
   try {
     const { payload } = await jwtVerify(token, jwks(appId), {
       issuer: 'privy.io',
       audience: appId,
     });
-    return emailFromLinkedAccounts(payload['linked_accounts']);
+    return emailsFromLinkedAccounts(payload['linked_accounts']);
   } catch {
     return null;
   }

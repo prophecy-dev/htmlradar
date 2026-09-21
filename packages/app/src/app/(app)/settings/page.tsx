@@ -125,7 +125,7 @@ export default async function SettingsPage(props: {
 
       <dl className="mt-10 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-paper">
         <Row label="Email" value={profile?.email ?? user.email} />
-        <Row label="Signed in with" value="Privy (e-mail code)" />
+        <Row label="Signed in with" value="Privy (Google or e-mail code)" />
         <Row label="Account created" value={accountCreated} />
       </dl>
 
