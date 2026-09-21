@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 export default function Forbidden() {
   return (
     <div className="mx-auto max-w-xl px-6 py-24">
