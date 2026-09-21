@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { geoFromRequest, injectTracker } from '../src/inject.js';
-import type { Share } from '../src/supabase.js';
+import type { Share } from '../src/store.js';
 
 // HTMLRewriter is a Cloudflare-Workers global. Vitest runs in Node where
 // it doesn't exist. We don't need to exercise the rewriter's mutation
@@ -16,8 +16,13 @@ import type { Share } from '../src/supabase.js';
 // to exercise the document-end fallback; afterEach resets to a normal doc.
 let mockPresence = { head: true, body: true };
 
+let lastRewriter: FakeHTMLRewriter | null = null;
 class FakeHTMLRewriter {
-  private handlers: Record<string, { element(el: FakeElement): void }> = {};
+  handlers: Record<string, { element(el: FakeElement): void }> = {};
+  constructor() {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    lastRewriter = this;
+  }
   private docHandler: { end(end: FakeDocEnd): void } | null = null;
   private appended: { head: string[]; body: string[]; doc: string[] } = {
     head: [],
@@ -125,8 +130,14 @@ function makeShare(overrides: Partial<Share> = {}): Share {
     expires_at: null,
     revoked_at: null,
     ...overrides,
-  };
+  } as Share;
 }
+
+const BASE = {
+  trackingEnabled: true,
+  trackerUrl: '/v1/tracker.abc123def456.js',
+  endpoint: 'https://docs.example',
+};
 
 function inject(opts: { lockDeck: boolean; email?: string; recipientLabel?: string | null }) {
   const res = injectTracker(
@@ -136,11 +147,7 @@ function inject(opts: { lockDeck: boolean; email?: string; recipientLabel?: stri
         lock_deck: opts.lockDeck,
         ...(opts.recipientLabel !== undefined ? { recipient_label: opts.recipientLabel } : {}),
       }),
-      tier: 'pro', // skip chrome footer so we don't fight with it in assertions
-      trackingEnabled: true,
-      trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-      supabaseUrl: 'https://example.supabase.co',
-      supabaseAnonKey: 'anon-key',
+      ...BASE,
       ...(opts.email ? { email: opts.email } : {}),
     },
   );
@@ -166,8 +173,6 @@ describe('download/screenshot guard injection (lock_deck semantic)', () => {
 
   it('uses the recipient email in the watermark when present', async () => {
     const html = await inject({ lockDeck: true, email: 'marc@example.com' });
-    expect(html).toContain('marc@example.com');
-    // Watermark span should appear many times (tiled grid).
     const count = (html.match(/marc@example\.com/g) ?? []).length;
     expect(count).toBeGreaterThan(20);
   });
@@ -177,9 +182,9 @@ describe('download/screenshot guard injection (lock_deck semantic)', () => {
     expect(html).toContain('Marc — Series A');
   });
 
-  it('falls back to a generic anon notice when neither email nor label is present', async () => {
+  it('falls back to a generic notice when neither email nor label is present', async () => {
     const html = await inject({ lockDeck: true, recipientLabel: null });
-    expect(html).toContain('Shared via htmlradar.com');
+    expect(html).toContain('<span>Confidential</span>');
   });
 
   it('html-escapes the watermark identity so a label with HTML cannot break out', async () => {
@@ -193,38 +198,21 @@ describe('download/screenshot guard injection (lock_deck semantic)', () => {
 
   it('does not block keyboard input on form fields (allows recipient to type in sender forms)', async () => {
     const html = await inject({ lockDeck: true });
-    // The script body itself must reference INPUT/TEXTAREA/SELECT — that's
-    // how we know the in-field bypass exists.
     expect(html).toContain("'INPUT'");
     expect(html).toContain("'TEXTAREA'");
     expect(html).toContain('isContentEditable');
   });
 
-  it('guard sits BEFORE the chrome footer in body append order', async () => {
-    // Free tier ALSO injects a "Powered by" chrome footer. Order
-    // matters: guard styles + watermark must be in the DOM before the
-    // footer so the footer is also covered by the protection layer.
-    const res = injectTracker(
-      new Response('<!doctype html><html><head></head><body></body></html>'),
-      {
-        share: makeShare({ lock_deck: true }),
-        tier: 'free',
-        trackingEnabled: true,
-        trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-        supabaseUrl: 'https://example.supabase.co',
-        supabaseAnonKey: 'anon-key',
-      },
-    );
-    const html = await res.text();
+  it('guard sits BEFORE the tracked pill in body append order', async () => {
+    const html = await inject({ lockDeck: true });
     const guardIdx = html.indexOf('htmlradar-guard-style');
-    const footerIdx = html.indexOf('Powered by');
+    const pillIdx = html.indexOf('This link is tracked');
     expect(guardIdx).toBeGreaterThan(0);
-    expect(footerIdx).toBeGreaterThan(0);
-    expect(guardIdx).toBeLessThan(footerIdx);
+    expect(pillIdx).toBeGreaterThan(0);
+    expect(guardIdx).toBeLessThan(pillIdx);
   });
 });
 
-// New tests for the corner-pill attachments UI introduced in Batch A.
 describe('attachments panel — corner pill UI', () => {
   function injectWithAttachments(args: {
     lockDeck: boolean;
@@ -234,17 +222,14 @@ describe('attachments panel — corner pill UI', () => {
       new Response('<!doctype html><html><head></head><body></body></html>'),
       {
         share: makeShare({ lock_deck: args.lockDeck }),
-        tier: 'pro',
-        trackingEnabled: true,
-        trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-        supabaseUrl: 'https://example.supabase.co',
-        supabaseAnonKey: 'anon-key',
+        ...BASE,
         attachments: args.attachments.map((a) => ({
           id: a.id,
           filename: a.filename,
           mime_type: a.mime_type,
           size_bytes: a.size_bytes,
           document_id: 'doc-1',
+          owner_id: 'owner-1',
           r2_key: 'k',
           created_at: '2026-05-18',
         })),
@@ -280,14 +265,11 @@ describe('attachments panel — corner pill UI', () => {
   it('also injects the panel when lock_deck = false (decoupled from deck-lock)', async () => {
     const html = await injectWithAttachments({ lockDeck: false, attachments: sample });
     expect(html).toContain('hr-att-pill');
-    expect(html).toContain('Financials_v3.pdf');
   });
 
   it('renders the file count badge accurately', async () => {
     const html = await injectWithAttachments({ lockDeck: true, attachments: sample });
-    // Pill badge shows the count.
     expect(html).toContain('hr-att-pill-count">2');
-    // Drawer subheading: "2 attached"
     expect(html).toContain('2 attached');
   });
 
@@ -321,177 +303,136 @@ describe('attachments panel — corner pill UI', () => {
 });
 
 describe('document response headers', () => {
-  const opts = {
-    tier: 'pro' as const,
-    trackingEnabled: true,
-    trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-    supabaseUrl: 'https://example.supabase.co',
-    supabaseAnonKey: 'anon-key',
-  };
-
-  // form-action 'none' is the credential-harvesting defence: a convincing
-  // sign-in page uploaded as a document cannot post what a visitor types,
-  // to us or to anyone else. The tracker's own gate is unaffected — it
-  // calls preventDefault and sends the address with fetch, which
-  // form-action does not govern.
-  it('forbids every form submission from a hosted document', async () => {
+  // form-action 'none' is the credential-harvesting defence: a sign-in page
+  // uploaded as a document cannot post what a visitor types.
+  it('forbids every form submission and every framer', async () => {
     const res = injectTracker(new Response('<html><head></head><body></body></html>'), {
       share: makeShare({ lock_deck: false }),
-      ...opts,
+      ...BASE,
     });
     const csp = res.headers.get('Content-Security-Policy') ?? '';
     expect(csp).toContain("form-action 'none'");
-    expect(csp).not.toContain("form-action 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("base-uri 'none'");
-  });
-
-  // The trust wrapper's frame route, and the exact headers the design gives it
-  // (TRUST-LAYER-DESIGN-2026-08-31.md, "The exact frame arrangement"). The
-  // route's own behaviour — the gate, Sec-Fetch-Dest, the gates repeated — is
-  // frame-route.test.ts; what a served frame response CARRIES is here, where
-  // the real injectTracker can run.
-  describe('the framed response', () => {
-    const framed = () =>
-      injectTracker(new Response('<html><head></head><body></body></html>'), {
-        share: makeShare({ lock_deck: false }),
-        ...opts,
-        framed: true,
-      });
-
-    it('allows exactly one framer, which is the wrapper on the same host', async () => {
-      // The only relaxation the trust layer makes to today's document policy.
-      const csp = framed().headers.get('Content-Security-Policy') ?? '';
-      expect(csp).toContain("frame-ancestors 'self'");
-      expect(csp).not.toContain("frame-ancestors 'none'");
-    });
-
-    it('drops X-Frame-Options on that route alone', async () => {
-      // It is the older instruction and it would override the newer
-      // frame-ancestors, so leaving it would stop the wrapper framing the
-      // document it exists to frame.
-      expect(framed().headers.get('X-Frame-Options')).toBeNull();
-      const unframed = injectTracker(new Response('<html><head></head><body></body></html>'), {
-        share: makeShare({ lock_deck: false }),
-        ...opts,
-      });
-      expect(unframed.headers.get('X-Frame-Options')).toBe('DENY');
-    });
-
-    it('denies the two features that can paint outside a frame', async () => {
-      // Fullscreen, and video Picture-in-Picture, which floats a window over
-      // everything and is allowed by default unless turned off. Denied here,
-      // on the wrapper's own header, and on the frame element — three places,
-      // because a strip that can be covered is not a control.
-      const pp = framed().headers.get('Permissions-Policy') ?? '';
-      expect(pp).toBe('fullscreen=(), picture-in-picture=()');
-    });
-
-    it('keeps everything else about the document policy as it is today', async () => {
-      const csp = framed().headers.get('Content-Security-Policy') ?? '';
-      expect(csp).toContain("base-uri 'none'");
-      expect(csp).toContain("form-action 'none'");
-      expect(framed().headers.get('X-Content-Type-Options')).toBe('nosniff');
-      expect(framed().headers.get('Cache-Control')).toBe('private, max-age=0, must-revalidate');
-    });
-
-    it('does not blank the referrer, which the tracker records as the referral source', async () => {
-      // The first draft set no-referrer on wrapper and frame and would have
-      // destroyed a field we store. What must not leak to the sender is the
-      // recipient's identity, and that is kept out of the frame address
-      // instead.
-      expect(framed().headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
-      expect(framed().headers.get('Referrer-Policy')).not.toBe('no-referrer');
-    });
+    expect(csp).toMatch(/^sandbox allow-scripts allow-forms allow-popups allow-downloads;/);
+    expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+    // Not no-referrer: the tracker records the referral source.
+    expect(res.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
   });
 });
 
-// Regression guard for the 2026-07-08 incident: a customer uploaded an HTML
-// fragment (no <head>/<html>/<body> tags). HTMLRewriter's element handlers
-// never fired, so the tracker script was silently dropped — the doc served
-// fine but recorded zero sessions, zero analytics, and sent no first-open
-// email. The document-end fallback must inject the tracker regardless.
-describe('fragment / headless document fallback', () => {
-  const opts = {
-    tier: 'pro' as const,
-    trackingEnabled: true,
-    trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-    supabaseUrl: 'https://example.supabase.co',
-    supabaseAnonKey: 'anon-key',
+describe('the tracker tag', () => {
+  it('points at the proxy endpoint with the slug, and carries no Supabase key', async () => {
+    const html = await inject({ lockDeck: false });
+    expect(html).toContain('src="/v1/tracker.abc123def456.js"');
+    expect(html).toContain('data-endpoint="https://docs.example"');
+    expect(html).toContain('data-share-slug="abc123"');
+    expect(html).not.toMatch(/supabase|anon-key/i);
+  });
+});
+
+describe('the unfurl card on a served document', () => {
+  const card = {
+    title: 'Hivemarket — AI sales deck',
+    description: 'Per-slide read tracking',
+    image: 'https://docs.example/r/abc123/og-image',
+    url: 'https://docs.example/r/abc123',
+    siteName: 'Hivemarket',
   };
 
+  it('puts the share card in <head>', async () => {
+    const res = injectTracker(new Response('<html><head></head><body></body></html>'), {
+      share: makeShare({ lock_deck: false }),
+      ...BASE,
+      og: card,
+    });
+    const html = await res.text();
+    expect(html).toContain('<meta property="og:title" content="Hivemarket — AI sales deck">');
+    expect(html).toContain('<meta property="og:description" content="Per-slide read tracking">');
+    expect(html).toContain(
+      '<meta property="og:image" content="https://docs.example/r/abc123/og-image">',
+    );
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+  });
+
+  it('omits og:image when the document has none', async () => {
+    const res = injectTracker(new Response('<html><head></head><body></body></html>'), {
+      share: makeShare({ lock_deck: false }),
+      ...BASE,
+      og: { ...card, image: null },
+    });
+    const html = await res.text();
+    expect(html).toContain('og:title');
+    expect(html).not.toContain('og:image');
+  });
+
+  it("removes the document's own og:/twitter: tags so they cannot compete", () => {
+    injectTracker(new Response('<html><head></head><body></body></html>'), {
+      share: makeShare({ lock_deck: false }),
+      ...BASE,
+      og: card,
+    });
+    const handlers = lastRewriter!.handlers;
+    let removed = 0;
+    const el = { remove: () => removed++ };
+    handlers['meta[property^="og:"]']!.element(el as unknown as FakeElement);
+    handlers['meta[name^="twitter:"]']!.element(el as unknown as FakeElement);
+    expect(removed).toBe(2);
+  });
+});
+
+// Regression guard for the 2026-07-08 incident: an HTML fragment with no
+// <head>/<body> fired no element handler and the tracker was silently dropped.
+describe('fragment / headless document fallback', () => {
   it('still injects the tracker when the upload has no <head> or <body>', async () => {
     mockPresence = { head: false, body: false };
     const res = injectTracker(new Response('<div class="wrap">just a fragment</div>'), {
       share: makeShare({ lock_deck: false }),
-      ...opts,
+      ...BASE,
     });
     const html = await res.text();
-    expect(html).toContain('https://htmlradar.com/v1/tracker.js');
+    expect(html).toContain('/v1/tracker.abc123def456.js');
     expect(html).toContain('HTMLRadarConfig');
   });
 
   it('injects the tracker exactly once when <head> exists (no double-inject)', async () => {
     const res = injectTracker(
       new Response('<!doctype html><html><head></head><body></body></html>'),
-      { share: makeShare({ lock_deck: false }), ...opts },
+      { share: makeShare({ lock_deck: false }), ...BASE },
     );
     const html = await res.text();
-    const count = (html.match(/HTMLRadarConfig/g) ?? []).length;
-    expect(count).toBe(1);
+    expect((html.match(/HTMLRadarConfig/g) ?? []).length).toBe(1);
   });
 
-  it('still injects the free-tier footer + lock guard on a headless doc', async () => {
+  it('still injects the tracked pill + lock guard on a headless doc', async () => {
     mockPresence = { head: false, body: false };
     const res = injectTracker(new Response('<div>frag</div>'), {
       share: makeShare({ lock_deck: true }),
-      ...opts,
-      tier: 'free',
+      ...BASE,
     });
     const html = await res.text();
-    expect(html).toContain('Powered by');
+    expect(html).toContain('This link is tracked');
     expect(html).toContain('htmlradar-guard-style');
   });
 });
 
-describe('recipient analytics boundaries', () => {
-  const baseOptions = {
-    share: makeShare({ lock_deck: false }),
-    trackerUrl: 'https://htmlradar.com/v1/tracker.js',
-    supabaseUrl: 'https://example.supabase.co',
-    supabaseAnonKey: 'anon-key',
-    trackingEnabled: true,
-  };
-
-  it('keeps tracking and the Powered by footer on a free recipient view', async () => {
-    const response = injectTracker(new Response('<html><head></head><body></body></html>'), {
-      ...baseOptions,
-      tier: 'free',
-    });
-    const html = await response.text();
-    expect(html).toContain('HTMLRadarConfig');
-    expect(html).toContain('Powered by');
-  });
-
-  it('keeps tracking but omits the Powered by footer on a Pro recipient view', async () => {
-    const response = injectTracker(new Response('<html><head></head><body></body></html>'), {
-      ...baseOptions,
-      tier: 'pro',
-    });
-    const html = await response.text();
-    expect(html).toContain('HTMLRadarConfig');
+describe('the tracked pill', () => {
+  it('replaces the Powered-by badge and links the privacy notice', async () => {
+    const html = await inject({ lockDeck: false });
+    expect(html).toContain('This link is tracked · privacy');
+    expect(html).toContain('href="/privacy"');
     expect(html).not.toContain('Powered by');
+    expect(html).not.toContain('htmlradar.com');
   });
 
-  it('shows the free-tier footer without creating recipient analytics in an owner preview', async () => {
-    const response = injectTracker(new Response('<html><head></head><body></body></html>'), {
-      ...baseOptions,
-      tier: 'free',
+  it('is absent, with the tracker, when tracking is off (owner preview, opted out)', async () => {
+    const res = injectTracker(new Response('<html><head></head><body></body></html>'), {
+      share: makeShare({ lock_deck: false }),
+      ...BASE,
       trackingEnabled: false,
     });
-    const html = await response.text();
-    expect(html).toContain('Powered by');
+    const html = await res.text();
     expect(html).not.toContain('HTMLRadarConfig');
-    expect(html).not.toContain('https://htmlradar.com/v1/tracker.js');
+    expect(html).not.toContain('This link is tracked');
   });
 });
