@@ -5,7 +5,7 @@
 // bytes). It is shown to the owner once; only its SHA-256 hash is stored, so
 // a dump of api_keys cannot be replayed against the API.
 //
-// /api/v1/* sits behind a Cloudflare Access Bypass policy (see README): the
+// /api/v1/* is exempt from the dashboard sign-in (middleware.ts): the
 // key is the only credential these routes accept.
 //
 // Nothing in this file logs the key, the hash, or any prefix of them.
