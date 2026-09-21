@@ -1,14 +1,18 @@
-// Every page is internal and sits behind Cloudflare Access. The proxy
+// Every page is internal and sits behind Cloudflare Access. The middleware
 // checks the Access identity (lib/access.ts) and answers 403 for anyone who
 // is not allowed. /api/v1/* is exempt: it authenticates API keys itself, and
 // the Access application must have a Bypass policy for that path.
+//
+// Still `middleware.ts`, not Next 16's `proxy.ts`: a proxy always runs on the
+// Node.js runtime, which @opennextjs/cloudflare supports only experimentally.
+// This file is the Access gate, so it stays on the supported edge path.
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { resolveAccessEmail } from '@/lib/access';
 
 const env = (name: string) => process.env[name] || undefined;
 
-export async function proxy(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith('/api/v1/') || pathname === '/forbidden') {
     return NextResponse.next();

@@ -16,7 +16,7 @@ gets past Access gets a profile, keyed by their lower-cased e-mail, on first vis
 with `Authorization: Bearer hr_live_…` keys created under Settings → API keys; Access
 would otherwise answer those requests with its login page. Add a second Access
 application for the path `/api/v1/` on the same hostname with a single **Bypass /
-Everyone** policy. The proxy (`src/proxy.ts`) skips that path, and every route there refuses a
+Everyone** policy. The middleware skips that path, and every route there refuses a
 request without a valid key.
 
 ## Local development

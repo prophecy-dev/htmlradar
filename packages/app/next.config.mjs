@@ -31,6 +31,8 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   // @htmlradar/db ships TypeScript source with NodeNext-style `.js` imports.
+  // Turbopack does not map those onto the `.ts` files, so `dev` and `build`
+  // run webpack (`--webpack` in package.json).
   transpilePackages: ['@htmlradar/db'],
   webpack(config) {
     config.resolve.extensionAlias = {

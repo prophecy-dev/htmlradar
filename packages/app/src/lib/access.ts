@@ -1,5 +1,5 @@
 // Who is asking — resolved from Cloudflare Access. No database, so the
-// proxy can use it as well as server components.
+// middleware can use it as well as server components.
 //
 // Order of trust:
 //   1. ACCESS_TEAM_DOMAIN + ACCESS_AUD set → the Cf-Access-Jwt-Assertion header

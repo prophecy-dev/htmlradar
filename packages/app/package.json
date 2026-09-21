@@ -11,9 +11,9 @@
   "scripts": {
     "copy:pdfjs": "node scripts/copy-pdfjs.mjs",
     "predev": "pnpm copy:pdfjs",
-    "dev": "next dev -p 3000",
+    "dev": "next dev --webpack -p 3000",
     "prebuild": "pnpm copy:pdfjs",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "build:cf": "opennextjs-cloudflare build",
     "preview": "pnpm build:cf && opennextjs-cloudflare preview",
