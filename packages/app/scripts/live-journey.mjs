@@ -132,9 +132,15 @@ export async function signInStep(cfg) {
   // next.config for a week and were silently absent on Cloudflare Pages, as
   // next-on-pages does not run Next's routing layer in front of a Pages
   // function. `next dev` said they were fine the whole time.
-  const sealed = (res, what) => {
+  //
+  // The confirmation page's policy must be `strict-origin`, NOT `no-referrer`:
+  // a browser derives the Origin of a form POST from it, and under no-referrer
+  // it posts `Origin: null`, which the login-CSRF check refuses. That took
+  // sign-in down on 21 Sep 2026 while this monitor passed, because it set
+  // Origin by hand. It no longer does — see the POST below.
+  const sealed = (res, what, referrerPolicy) => {
     for (const [header, expected] of [
-      ['referrer-policy', 'no-referrer'],
+      ['referrer-policy', referrerPolicy],
       ['cache-control', 'no-store'],
     ]) {
       const actual = res.headers.get(header);
@@ -148,7 +154,7 @@ export async function signInStep(cfg) {
 
   const confirmUrl = locationOf(scan);
   const confirm = await fetch(confirmUrl, { redirect: 'manual' });
-  sealed(confirm, '/auth/confirm');
+  sealed(confirm, '/auth/confirm', 'strict-origin');
   if (sessionCookies(confirm).length) {
     throw new Error(
       'a GET on /auth/confirm set an sb- session cookie — rendering the page is signing people in, which is the whole bug',
@@ -168,21 +174,30 @@ export async function signInStep(cfg) {
     throw new Error('the confirmation form carries no token_hash field — the button cannot work');
   }
 
-  // Half two: the button, submitted the way the browser on that page would —
-  // same-origin, with the Origin header the login-CSRF check requires.
+  // Half two: the button, submitted with exactly the headers a browser on
+  // that page would send. The Origin is DERIVED from the page's own referrer
+  // policy rather than asserted, because asserting it is what let the 21 Sep
+  // outage through: under `no-referrer` a browser sends `Origin: null`, and
+  // a monitor that hard-codes the real origin proves nothing about browsers.
+  // Real-browser coverage of this now lives in the golden journeys.
+  const policy = confirm.headers.get('referrer-policy');
+  const pageOrigin = new URL(confirmUrl).origin;
+  const browserOrigin = policy === 'no-referrer' ? 'null' : pageOrigin;
+  const browserReferer =
+    policy === 'no-referrer' ? null : policy === 'strict-origin' ? `${pageOrigin}/` : confirmUrl;
   const callback = await fetch(new URL(form.action, confirmUrl), {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      origin: new URL(confirmUrl).origin,
-      referer: confirmUrl,
+      origin: browserOrigin,
+      ...(browserReferer ? { referer: browserReferer } : {}),
       'sec-fetch-site': 'same-origin',
     },
     body: new URLSearchParams(form.fields),
     redirect: 'manual',
   });
   const destination = pathOf(callback);
-  sealed(callback, 'the POST to /auth/callback');
+  sealed(callback, 'the POST to /auth/callback', 'no-referrer');
 
   // 303 specifically: a 307 would make the browser re-POST to the
   // destination, and a refresh would offer to submit the token again.

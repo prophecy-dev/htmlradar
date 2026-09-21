@@ -61,24 +61,22 @@ function stubFetch(
 ) {
   // Both token-bearing responses must deny referrers and caching; the
   // defaults are the healthy case, and `seal` breaks one of them.
-  const SEALED: [string, string][] = [
-    ['referrer-policy', 'no-referrer'],
-    ['cache-control', 'no-store'],
-  ];
-  const sealedHeaders = (override?: Record<string, string | null>) =>
+  // The confirmation page must be strict-origin, the callback no-referrer.
+  const SEALED: [string, string][] = [['cache-control', 'no-store']];
+  const sealedHeaders = (policy: string, override?: Record<string, string | null>) =>
     new Headers(
-      SEALED.map(([key, value]) => [key, override?.[key] ?? value] as [string, string]).filter(
-        ([, value]) => value !== 'ABSENT',
-      ),
+      [['referrer-policy', policy] as [string, string], ...SEALED]
+        .map(([key, value]) => [key, override?.[key] ?? value] as [string, string])
+        .filter(([, value]) => value !== 'ABSENT'),
     );
-  const headers = sealedHeaders(scan.sealCallback);
+  const headers = sealedHeaders('no-referrer', scan.sealCallback);
   headers.set('location', callback.location);
   if (callback.cookie) headers.append('set-cookie', callback.cookie);
   const scanHeaders = new Headers([
     ['location', scan.location ?? 'https://htmlradar.com/auth/confirm?token_hash=pkce_abc123'],
   ]);
   if (scan.cookie) scanHeaders.append('set-cookie', scan.cookie);
-  const confirmHeaders = sealedHeaders(scan.sealConfirm);
+  const confirmHeaders = sealedHeaders('strict-origin', scan.sealConfirm);
   if (scan.confirmCookie) confirmHeaders.append('set-cookie', scan.confirmCookie);
   const guarded = scan.guarded ?? { status: 200 };
   const sent: Sent[] = [];
@@ -159,7 +157,32 @@ describe('signInStep', () => {
     const post = sent.find((call) => call.url.endsWith('/auth/callback'));
     expect(post?.headers['origin']).toBe('https://htmlradar.com');
     expect(post?.headers['sec-fetch-site']).toBe('same-origin');
-    expect(post?.headers['referer']).toContain('/auth/confirm');
+    // strict-origin: the Referer is the bare origin, never the token path.
+    expect(post?.headers['referer']).toBe('https://htmlradar.com/');
+  });
+
+  // The 21 September 2026 outage in one test. Under `no-referrer` a real
+  // browser posts `Origin: null`; this monitor used to hard-code the true
+  // origin, so it passed while every human was refused. It must now send what
+  // the page's own policy makes a browser send, so the class fails daily.
+  it('posts Origin: null when the page policy is no-referrer, as a browser does', async () => {
+    const { sent } = stubFetch(signedIn, { sealConfirm: { 'referrer-policy': 'no-referrer' } });
+    // The policy is wrong, so the run fails — but on the header assertion,
+    // and only after the POST has been built the way a browser would build it.
+    await expect(signInStep(cfg)).rejects.toThrow(/referrer-policy/);
+    const post = sent.find((call) => call.url.endsWith('/auth/callback'));
+    expect(post).toBeUndefined();
+  });
+
+  it('derives the POST Origin from the served policy rather than asserting it', async () => {
+    const { sent } = stubFetch(signedIn);
+    await signInStep(cfg);
+    const post = sent.find((call) => call.url.endsWith('/auth/callback'));
+    // strict-origin is what /auth/confirm serves, so a browser sends the real
+    // origin and the bare origin as Referer — no token path anywhere.
+    expect(post?.headers['origin']).toBe('https://htmlradar.com');
+    expect(post?.headers['referer']).toBe('https://htmlradar.com/');
+    expect(post?.headers['referer']).not.toContain('token_hash');
   });
 
   // The script must not quietly supply the token it minted: a form that
@@ -201,7 +224,7 @@ describe('signInStep', () => {
   });
 
   it('fails when the POST response does not deny referrers', async () => {
-    stubFetch(signedIn, { sealCallback: { 'referrer-policy': 'strict-origin-when-cross-origin' } });
+    stubFetch(signedIn, { sealCallback: { 'referrer-policy': 'no-referrer-when-downgrade' } });
     await expect(signInStep(cfg)).rejects.toThrow(
       /the POST to \/auth\/callback answered referrer-policy/,
     );

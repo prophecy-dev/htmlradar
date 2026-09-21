@@ -124,11 +124,23 @@ const SITE_ORIGIN = 'https://htmlradar.com';
 // people out. The request's own origin is accepted alongside the canonical
 // one so localhost and preview deployments still work; on Pages only bound
 // hostnames reach the worker, so it is not an attacker-controlled value.
+//
+// `Origin: null` is the one exception, and it is why this check took
+// production down on 21 Sep 2026. A browser derives the Origin of a form POST
+// from the page's referrer policy, so a page served `Referrer-Policy:
+// no-referrer` posts with a literal `Origin: null` — which refused every real
+// sign-in while the fetch-based monitor, setting Origin by hand, passed.
+// /auth/confirm is served `strict-origin` now so a real Origin comes back,
+// and null is accepted only alongside `Sec-Fetch-Site: same-origin`. That is
+// safe because Sec-Fetch-Site is a forbidden header name: script cannot set
+// it, only the browser can, and a cross-site page gets `cross-site`. Null
+// with the header missing or saying anything else stays refused.
 function isSameOriginPost(req: NextRequest): boolean {
   const origin = req.headers.get('origin');
+  const fetchSite = req.headers.get('sec-fetch-site');
+  if (origin === 'null') return fetchSite === 'same-origin';
   if (!origin) return false;
   if (origin !== SITE_ORIGIN && origin !== new URL(req.url).origin) return false;
-  const fetchSite = req.headers.get('sec-fetch-site');
   return fetchSite === null || fetchSite === 'same-origin';
 }
 

@@ -49,7 +49,13 @@ export async function middleware(req: NextRequest) {
   // auth logic starts running on it. /auth/callback is a route handler and
   // stamps the same pair on its own responses (see auth/callback/route.ts).
   if (pathname === '/auth/confirm') {
-    res.headers.set('Referrer-Policy', 'no-referrer');
+    // strict-origin, NOT no-referrer. A browser derives the Origin header of
+    // a form POST from the referrer policy, so under no-referrer Chrome sends
+    // `Origin: null` and the login-CSRF check refused every real sign-in
+    // (21 Sep 2026: "origin null, sec-fetch-site same-origin" in app_events).
+    // strict-origin sends only `https://htmlradar.com` as the Referer — never
+    // the path, never the token — and restores a real Origin on the POST.
+    res.headers.set('Referrer-Policy', 'strict-origin');
     res.headers.set('Cache-Control', 'no-store');
   }
 

@@ -183,6 +183,36 @@ describe('a POST from anywhere but our own page', () => {
   });
 });
 
+// The outage of 21 September 2026. A browser derives the Origin of a form
+// POST from the page's referrer policy, so under `Referrer-Policy:
+// no-referrer` Chrome posts `Origin: null` and every real sign-in was
+// refused — while the monitor, which sets Origin by hand, passed.
+describe('a POST whose Origin the browser reports as null', () => {
+  it('is accepted when Sec-Fetch-Site says same-origin', async () => {
+    await post({ token_hash: 'h1' }, { origin: 'null', 'sec-fetch-site': 'same-origin' });
+    expect(state.verifyCalls).toEqual([{ type: 'email', token_hash: 'h1' }]);
+  });
+
+  // Sec-Fetch-Site is a forbidden header name, so script cannot forge it and
+  // a cross-site page always gets `cross-site`.
+  it('is refused when Sec-Fetch-Site says cross-site', async () => {
+    await post({ token_hash: 'h1' }, { origin: 'null', 'sec-fetch-site': 'cross-site' });
+    expect(state.verifyCalls).toEqual([]);
+    expect(reasonOf('auth.callback_failed')).toBe('cross_origin');
+  });
+
+  it('is refused when Sec-Fetch-Site is absent, which no browser does', async () => {
+    await post({ token_hash: 'h1' }, { origin: 'null', 'sec-fetch-site': null });
+    expect(state.verifyCalls).toEqual([]);
+    expect(reasonOf('auth.callback_failed')).toBe('cross_origin');
+  });
+
+  it('is refused when Sec-Fetch-Site says same-site, a sibling subdomain', async () => {
+    await post({ token_hash: 'h1' }, { origin: 'null', 'sec-fetch-site': 'same-site' });
+    expect(state.verifyCalls).toEqual([]);
+  });
+});
+
 describe('the POST from the confirmation button', () => {
   it('verifies the token hash and sends the person on to next', async () => {
     const res = await post({ token_hash: 'h1', next: '/convert?resume=abc' });
