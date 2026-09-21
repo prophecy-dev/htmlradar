@@ -76,23 +76,33 @@ import {
   type Share,
 } from './supabase.js';
 import {
+  deriveReaderId,
   hashReporterAddress,
   issueAuthCookie,
   issueEmailCookie,
   issueOptOutToken,
   issuePrintGrant,
   isTrackingOptedOut,
+  optOutNeedsMigration,
+  newOptOutChallenge,
   newPrintSecret,
+  newReaderSecret,
+  optOutChallengeCookie,
   printCookie,
+  readerCookie,
+  readOptOutChallenge,
   readPrintCookie,
+  readReaderCookie,
   verifyAuthCookie,
   verifyEmailCookie,
   verifyOptOutToken,
   verifyOwnerDocPreviewToken,
   verifyOwnerPreviewToken,
   verifyPrintGrant,
-  OPT_OUT_CLEAR_COOKIE,
+  OPT_OUT_CHALLENGE_CLEAR_COOKIE,
+  OPT_OUT_CLEAR_COOKIES,
   OPT_OUT_COOKIE,
+  READER_CLEAR_COOKIE,
 } from './auth.js';
 import { fetchDocumentHtml } from './fetch-html.js';
 import { geoFromRequest, injectTracker } from './inject.js';
@@ -661,11 +671,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     } else {
       const param = url.searchParams.get('optout');
       if (param === '1' || param === '0') {
-        return optOutConfirm(
-          slug,
-          param,
-          await issueOptOutToken(param, slug, url.hostname, env.SESSION_SECRET),
-        );
+        return askOptOut(slug, param, url.hostname, env);
       }
     }
   }
@@ -869,23 +875,75 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // the same sandbox CSP — just no tracker, and therefore no session.
   const optedOut = isTrackingOptedOut(request.headers.get('cookie'));
 
+  // Print is a second view of a document the reader already opened, so it does
+  // not start a session of its own; the owner's own preview is not a read; and
+  // an opted-out reader gets no tracker at all.
+  const trackingEnabled = subroute !== 'print' && !isOwnerPreview && !optedOut;
+
+  // The returning reader. `hr_rid` carries a random value on the host that
+  // served the document; what the tracker is handed is that value bound to
+  // this document (see deriveReaderId), so the tracker needs no browser
+  // storage — which is what the sandbox took away on 31 August.
+  //
+  // Nothing is set and nothing is used when tracking is off, which is what the
+  // opt-out means: the cookie is not minted, no identifier is derived, and no
+  // identifier reaches the page.
+  let readerId: string | undefined;
+  const setCookies: string[] = [];
+  if (trackingEnabled) {
+    const existing = readReaderCookie(request.headers.get('cookie'));
+    const secret = existing ?? newReaderSecret();
+    if (!existing) setCookies.push(readerCookie(secret));
+    readerId = await deriveReaderId(secret, share.document_id, env.SESSION_SECRET);
+  } else if (optOutNeedsMigration(request.headers.get('cookie'))) {
+    // A reader who opted out before the preference moved under `__Host-`. Write
+    // the new name alongside the old one on their next open, after which their
+    // choice sits under a name no parent domain can write. The read already
+    // honours either, so this is a hardening step and not a correctness one.
+    setCookies.push(OPT_OUT_COOKIE);
+  }
+
   return injectTracker(html, {
     share,
     tier,
     // frame-ancestors 'self' and no X-Frame-Options, on that route alone.
     framed: subroute === 'frame',
-    // Print is a second view of a document the reader already opened, so it
-    // does not start a session of its own. Today's Cmd+P on the unwrapped page
-    // does not either, and a print address that carried a viewer's identity
-    // would be a worse thing to leave in a browser's history.
-    trackingEnabled: subroute !== 'print' && !isOwnerPreview && !optedOut,
+    // Today's Cmd+P on the unwrapped page does not start a session either, and
+    // a print address that carried a viewer's identity would be a worse thing
+    // to leave in a browser's history.
+    trackingEnabled,
     trackerUrl: TRACKER_PATH,
     supabaseUrl: env.SUPABASE_URL,
     supabaseAnonKey: env.SUPABASE_ANON_KEY,
     ...(verifiedEmail ? { email: verifiedEmail } : {}),
+    ...(readerId ? { readerId } : {}),
+    ...(setCookies.length > 0 ? { setCookies } : {}),
     ...(geo && Object.keys(geo).length > 0 ? { geo } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   });
+}
+
+/**
+ * Asking the question, which is the only thing that mints a challenge.
+ *
+ * The page and the cookie are made together and are useless apart: the token
+ * in the form is signed over the challenge in the cookie, so a token lifted
+ * off this page and replayed from anywhere else meets a browser that does not
+ * hold the matching challenge. Every path that shows this page comes through
+ * here, so there is no way to render the form without its cookie.
+ */
+async function askOptOut(
+  slug: string,
+  optout: '1' | '0',
+  hostname: string,
+  env: Env,
+  status = 200,
+): Promise<Response> {
+  const challenge = newOptOutChallenge();
+  const token = await issueOptOutToken(optout, slug, hostname, challenge, env.SESSION_SECRET);
+  const res = optOutConfirm(slug, optout, token, status);
+  res.headers.append('Set-Cookie', optOutChallengeCookie(challenge));
+  return res;
 }
 
 /**
@@ -920,24 +978,35 @@ async function handleOptOutSubmit(
   const token = form.get('token');
   if ((optout !== '1' && optout !== '0') || typeof token !== 'string') return null;
 
-  if (!(await verifyOptOutToken(token, optout, slug, hostname, env.SESSION_SECRET))) {
-    // Ask again with a fresh token rather than dead-ending: the common cause
-    // is a confirmation page left open for more than ten minutes.
-    return optOutConfirm(
-      slug,
-      optout,
-      await issueOptOutToken(optout, slug, hostname, env.SESSION_SECRET),
-      400,
-    );
+  // The challenge this browser was given when it was asked the question. A
+  // forged submission from somebody else's page carries a token signed over a
+  // DIFFERENT challenge — the attacker's own — so it fails here and writes
+  // nothing at all. See the note above issueOptOutToken.
+  const challenge = readOptOutChallenge(request.headers.get('cookie'));
+  if (!(await verifyOptOutToken(token, optout, slug, hostname, challenge, env.SESSION_SECRET))) {
+    // Ask again with a fresh challenge and token rather than dead-ending: the
+    // common causes are a confirmation page left open for more than ten
+    // minutes and a browser that discarded the challenge cookie.
+    return askOptOut(slug, optout, hostname, env, 400);
   }
 
-  return new Response(null, {
-    status: 303,
-    headers: {
-      Location: `/r/${slug}`,
-      'Set-Cookie': optout === '1' ? OPT_OUT_COOKIE : OPT_OUT_CLEAR_COOKIE,
-    },
-  });
+  // Opting out also wipes the returning-reader identifier, which is what the
+  // tracker's own optOut() does to the localStorage copy on a self-hosted
+  // page. Opting back IN wipes it too: the reader gets a new identifier on
+  // their next open rather than being rejoined to the one they turned off
+  // under.
+  const headers = new Headers({ Location: `/r/${slug}` });
+  // Turning it back on expires BOTH names — the `__Host-` one this writes and
+  // the legacy one a reader may still hold — or an honest opt-back-in would
+  // leave the old copy behind and the reader would stay opted out for ever.
+  if (optout === '1') headers.append('Set-Cookie', OPT_OUT_COOKIE);
+  else for (const c of OPT_OUT_CLEAR_COOKIES) headers.append('Set-Cookie', c);
+  headers.append('Set-Cookie', READER_CLEAR_COOKIE);
+  // Spend the challenge. The token is signed over it, so expiring it here is
+  // what makes a confirmation single-use rather than replayable for ten
+  // minutes by anyone who captured the form.
+  headers.append('Set-Cookie', OPT_OUT_CHALLENGE_CLEAR_COOKIE);
+  return new Response(null, { status: 303, headers });
 }
 
 async function handlePasswordSubmit(request: Request, share: Share, env: Env): Promise<Response> {

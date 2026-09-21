@@ -81,4 +81,33 @@ describe('resolveConfig', () => {
     expect(config?.geo?.country).toBe('US');
     expect(config?.geo?.browser).toBe('Safari');
   });
+
+  // The returning-reader identifier arrives the same way the email and the geo
+  // do, because a proxy-served document is sandboxed into an opaque origin
+  // where the tracker's own storage throws. boot() prefers this over
+  // getFingerprint(), which is what makes a second visit the same reader.
+  it('propagates the proxy-injected readerId when present', () => {
+    window.HTMLRadarConfig = { readerId: 'a'.repeat(64) };
+    const config = resolveConfig(
+      withScript({
+        'data-supabase-url': 'https://x.supabase.co',
+        'data-supabase-anon-key': 'eyJanon',
+        'data-share-slug': 's',
+      }),
+    );
+    expect(config?.readerId).toBe('a'.repeat(64));
+  });
+
+  // A directly-embedded tracker on a self-hosted page gets none, and falls
+  // back to its own localStorage fingerprint.
+  it('leaves readerId unset when the proxy did not supply one', () => {
+    const config = resolveConfig(
+      withScript({
+        'data-supabase-url': 'https://x.supabase.co',
+        'data-supabase-anon-key': 'eyJanon',
+        'data-share-slug': 's',
+      }),
+    );
+    expect(config?.readerId).toBeUndefined();
+  });
 });

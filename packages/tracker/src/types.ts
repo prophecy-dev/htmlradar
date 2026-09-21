@@ -18,6 +18,15 @@ export interface TrackerConfig {
   // shares enforce gate server-side). The tracker skips its Shadow DOM gate.
   email?: string;
 
+  // The returning-reader identifier, supplied by the proxy from its own
+  // first-party cookie on the document's host. Present on every proxy-served
+  // document, absent on a directly-embedded tracker — and absent when the
+  // reader has opted out, because the proxy then injects no tracker at all.
+  //
+  // It exists because a proxy-served document runs in an opaque origin, where
+  // localStorage throws and the stored fingerprint below is unreachable.
+  readerId?: string;
+
   // Populated by the proxy from Cloudflare's request.cf + parsed UA.
   geo?: Geo;
 

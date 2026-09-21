@@ -123,7 +123,7 @@ describe('the wrapper hands out both halves of the binding', () => {
   it('sets a random cookie the framed document cannot read', async () => {
     const res = await fetchAs('https://htmlradar.page/r/acme-proposal');
     const cookie = res.headers.get('Set-Cookie') ?? '';
-    expect(cookie).toMatch(/^hr_print=[0-9a-f]{32};/);
+    expect(cookie).toMatch(/^__Host-hr_print=[0-9a-f]{32};/);
     // HttpOnly is what puts it out of the sender's reach; no Domain attribute
     // is what binds it to this exact hostname.
     expect(cookie).toContain('HttpOnly');
@@ -241,7 +241,7 @@ describe('everything else lands back on the wrapper', () => {
     // — this is the binding underneath that.
     const { issuePrintGrant, verifyPrintGrant, newPrintSecret } = await import('../src/auth.js');
     const secret = newPrintSecret();
-    const cookie = `hr_print=${secret}`;
+    const cookie = `__Host-hr_print=${secret}`;
     const grant = await issuePrintGrant('acme-proposal', 'acme.htmlradar.page', secret, 'k');
     await expect(
       verifyPrintGrant(grant, 'acme-proposal', 'acme.htmlradar.page', cookie, 'k'),

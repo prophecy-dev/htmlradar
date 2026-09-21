@@ -13,6 +13,15 @@ interface InjectOptions {
   supabaseUrl: string;
   supabaseAnonKey: string;
   email?: string;
+  // The returning-reader identifier, derived from the `hr_rid` cookie and this
+  // document (see deriveReaderId in auth.ts). Handed to the tracker through the
+  // same runtime config that already carries the verified email and the geo,
+  // so the tracker never needs browser storage — which is what the sandbox
+  // took away. Absent when tracking is off, so nothing is set or used.
+  readerId?: string;
+  // Cookies this response must set: the reader identifier on the response that
+  // mints it, or the migrated opt-out preference. Empty on every other load.
+  setCookies?: string[];
   geo?: {
     country?: string;
     city?: string;
@@ -121,6 +130,10 @@ export function injectTracker(html: Response, opts: InjectOptions): Response {
   // proxy's gate and opt-out pages are separate responses that never carry
   // this header.
   headers.set('Content-Security-Policy', documentCsp(opts.framed ?? false));
+  // Only on the response that mints it. Re-sending on every load would reset a
+  // ninety-day life to ninety days on each open, and would rewrite a value a
+  // second tab on the same host is already using.
+  for (const cookie of opts.setCookies ?? []) headers.append('Set-Cookie', cookie);
   return new Response(out.body, { status: out.status, headers });
 }
 
@@ -131,6 +144,7 @@ function headInjection(opts: InjectOptions): string {
     gate: { enabled: opts.share.require_email && !opts.email },
   };
   if (opts.email) config['email'] = opts.email;
+  if (opts.readerId) config['readerId'] = opts.readerId;
   if (opts.geo) config['geo'] = opts.geo;
 
   // <script>-context safety: JSON encoding may produce a literal `</script>`

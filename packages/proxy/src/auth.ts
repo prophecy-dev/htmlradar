@@ -158,10 +158,36 @@ function cookieAttrs(name: string, value: string): string {
 // document runs in an opaque origin where localStorage and document.cookie
 // both throw. A cookie set by the proxy is the only store the recipient's
 // choice can survive in.
-export const OPT_OUT_COOKIE =
-  'hr_optout=1; Path=/r/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax';
-export const OPT_OUT_CLEAR_COOKIE =
-  'hr_optout=; Path=/r/; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
+// THE PREFERENCE IS WRITTEN UNDER `__Host-`, AND READ UNDER BOTH NAMES.
+//
+// The old name could be overridden by the one party with a motive. A cookie's
+// host scope is not decided by the host that set it: any parent domain can
+// write a cookie its subdomains receive. A customer who points decks.acme.com
+// at us also controls acme.com, so they could plant
+// `hr_optout=0; Domain=acme.com; Path=/r/` from any page on acme.com. Browsers
+// send cookies of equal path specificity oldest-first, so the planted copy
+// arrives after the genuine one, a last-wins parse takes it, `'0' !== '1'`,
+// and a recipient who had turned tracking off was silently tracked again on
+// that customer's domain.
+//
+// Two changes close it. The preference is now written as `__Host-hr_optout`,
+// which a browser refuses to set with a Domain attribute at all, so no parent
+// domain can write that name. And the READ below scans EVERY cookie on the
+// request rather than building a last-wins map: any copy of either name equal
+// to '1' means opted out. Planting can therefore only ever turn an opt-out ON,
+// which costs the planter their own tracking and harms nobody.
+const OPT_OUT_NAME = '__Host-hr_optout';
+const LEGACY_OPT_OUT_NAME = 'hr_optout';
+
+export const OPT_OUT_COOKIE = `${OPT_OUT_NAME}=1; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax`;
+
+// Clearing has to expire BOTH names, each on the path it was written with, or
+// an honest opt-back-in would leave the legacy copy behind and the reader
+// would stay opted out for ever.
+export const OPT_OUT_CLEAR_COOKIES = [
+  `${OPT_OUT_NAME}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`,
+  `${LEGACY_OPT_OUT_NAME}=; Path=/r/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`,
+];
 
 // The stored cookie is the only thing that decides. A query parameter used to
 // decide it too, which meant a GET changed the preference — and a GET is
@@ -169,9 +195,35 @@ export const OPT_OUT_CLEAR_COOKIE =
 // may navigate its browsing context even from an opaque origin. Both could
 // therefore switch tracking off across every sender's shares, or switch it
 // back on after the recipient had turned it off. See issueOptOutToken.
+//
+// Deliberately NOT parseCookies: that is last-wins, which is the bug above.
 export function isTrackingOptedOut(cookieHeader: string | null): boolean {
-  if (!cookieHeader) return false;
-  return parseCookies(cookieHeader)['hr_optout'] === '1';
+  return optOutCopies(cookieHeader).some((c) => c.value === '1');
+}
+
+// True when the reader's opt-out is recorded ONLY under the old name, which is
+// the signal to write the new one alongside it. Every reader who opted out
+// before this change migrates on their next open, after which the preference
+// sits under a name nobody else can write.
+export function optOutNeedsMigration(cookieHeader: string | null): boolean {
+  const copies = optOutCopies(cookieHeader);
+  return (
+    copies.some((c) => c.name === LEGACY_OPT_OUT_NAME && c.value === '1') &&
+    !copies.some((c) => c.name === OPT_OUT_NAME && c.value === '1')
+  );
+}
+
+function optOutCopies(cookieHeader: string | null): Array<{ name: string; value: string }> {
+  if (!cookieHeader) return [];
+  const out: Array<{ name: string; value: string }> = [];
+  for (const part of cookieHeader.split(/;\s*/)) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const name = part.slice(0, idx);
+    if (name !== OPT_OUT_NAME && name !== LEGACY_OPT_OUT_NAME) continue;
+    out.push({ name, value: part.slice(idx + 1) });
+  }
+  return out;
 }
 
 // Confirmation token for the opt-out POST.
@@ -192,18 +244,74 @@ export function isTrackingOptedOut(cookieHeader: string | null): boolean {
 // ask for on that host. Bound here for the same reason the print grant binds
 // its hostname: a signed thing minted on one host should not spend on another.
 //
-// Format: `{expiry}.{hex hmac}` — hex rather than base64url so the value is
-// safe in an HTML attribute and a form field without any encoding thought.
+// THE BROWSER IS IN THE SIGNATURE TOO, and without it the token was forgeable.
+// Everything above binds the token to a question, a share and a host — all
+// facts an attacker knows. Nothing bound it to the browser being asked, so an
+// attacker could fetch `?optout=0` themselves, take the token, and auto-submit
+// it from a page of their own as a top-level form post. That turned a victim's
+// tracking back on over their choice, and once the reader identifier was
+// cleared on the same response it reset their identity as well.
+//
+// So the confirmation page now also sets a random challenge cookie, and the
+// token signs that challenge. An attacker can still mint a token, but only one
+// signed over THEIR challenge, and they can neither read nor set the victim's.
+// The victim's browser rejects the submission because its cookie does not
+// match what the token was signed over.
+//
+// WHY SameSite=None, AND WHY THAT IS NOT A HOLE. The confirmation page carries
+// the same opaque-origin sandbox every other proxy response does, and a
+// document in an opaque origin has no registrable domain, so the browser
+// treats even a post back to the page's own host as cross-site — the same
+// reason wrapper.ts may not be sandboxed. A Lax cookie is not sent on a
+// cross-site POST, so a Lax challenge would never arrive and every genuine
+// confirmation would fail. None is what makes the genuine post work.
+//
+// It costs nothing, because the site check was never the defence here. The
+// defence is that the challenge is 128 unguessable bits the attacker cannot
+// read (HttpOnly, and a different origin to theirs) and cannot set (no Domain,
+// and they do not control this host). A forged post does carry the victim's
+// challenge cookie, and is refused anyway, because the attacker's token is
+// signed over a different value.
+// `__Host-` HERE TOO, and without it the challenge was itself plantable —
+// which handed back the whole forgery the challenge exists to stop. A customer
+// owning acme.com could load their own confirmation page on decks.acme.com to
+// get a matching pair, plant `hr_optout_c=<their challenge>; Domain=acme.com`
+// in a reader's browser from any page on acme.com, and auto-submit their token
+// with optout=0. The reader normally holds no challenge of their own, so the
+// duplicate rule never fires, cookie and token agree, and the sender forcibly
+// resumes tracking somebody who had opted out.
+//
+// The prefix forbids Domain and requires Secure and Path=/, so only this exact
+// host can write the name. It permits SameSite=None, which this cookie needs
+// for the reason below.
+const OPT_OUT_CHALLENGE_COOKIE = '__Host-hr_optout_c';
 const OPT_OUT_TOKEN_TTL_SECONDS = 10 * 60;
+
+export function newOptOutChallenge(): string {
+  return newPrintSecret();
+}
+
+// Its life is the token's life: a stale challenge and a stale token expire
+// together, and the page re-asks with a fresh pair.
+export function optOutChallengeCookie(challenge: string): string {
+  return `${OPT_OUT_CHALLENGE_COOKIE}=${challenge}; Path=/; Max-Age=${OPT_OUT_TOKEN_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`;
+}
+
+export const OPT_OUT_CHALLENGE_CLEAR_COOKIE = `${OPT_OUT_CHALLENGE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+
+export function readOptOutChallenge(cookieHeader: string | null): string | null {
+  return readSingleHexCookie(cookieHeader, OPT_OUT_CHALLENGE_COOKIE);
+}
 
 export async function issueOptOutToken(
   optout: string,
   slug: string,
   hostname: string,
+  challenge: string,
   secret: string,
 ): Promise<string> {
   const expiresAt = Math.floor(Date.now() / 1000) + OPT_OUT_TOKEN_TTL_SECONDS;
-  return `${expiresAt}.${await hmacHex(`${optout}|${slug}|${hostname}|${expiresAt}`, secret)}`;
+  return `${expiresAt}.${await hmacHex(optOutMessage(optout, slug, hostname, challenge, expiresAt), secret)}`;
 }
 
 export async function verifyOptOutToken(
@@ -211,17 +319,32 @@ export async function verifyOptOutToken(
   optout: string,
   slug: string,
   hostname: string,
+  challenge: string | null,
   secret: string,
 ): Promise<boolean> {
+  // No challenge cookie, nothing to verify against. A submission that arrives
+  // without one never saw the confirmation page in this browser.
+  if (!challenge) return false;
   const parts = token.split('.');
   if (parts.length !== 2) return false;
   const [expiryStr, mac] = parts as [string, string];
   const expiresAt = Number.parseInt(expiryStr, 10);
   if (!Number.isFinite(expiresAt)) return false;
   if (expiresAt < Math.floor(Date.now() / 1000)) return false;
-  const expected = await hmacHex(`${optout}|${slug}|${hostname}|${expiresAt}`, secret);
+  const expected = await hmacHex(
+    optOutMessage(optout, slug, hostname, challenge, expiresAt),
+    secret,
+  );
   return constantTimeEqual(mac, expected);
 }
+
+const optOutMessage = (
+  optout: string,
+  slug: string,
+  hostname: string,
+  challenge: string,
+  expiresAt: number,
+): string => `${optout}|${slug}|${hostname}|${challenge}|${expiresAt}`;
 
 // The print grant, and why printing needs one.
 //
@@ -251,23 +374,29 @@ export async function verifyOptOutToken(
 // Format `{expiry}.{hex hmac}`, hex so the value needs no encoding thought in
 // an href. Message is prefixed `print:`, so no other token in this file can be
 // replayed as one of these, or one of these as another.
-const PRINT_COOKIE_NAME = 'hr_print';
+// `__Host-` for the same reason as the others, and this one is not academic.
+// The grant is signed over the cookie's value, so a sender who could plant
+// that value in a reader's browser could also mint a grant that matches it and
+// mail the reader a working /print address — which is precisely the way ROUND
+// the trust badge this cookie was introduced to close. The prefix means only
+// this host can write the name.
+const PRINT_COOKIE_NAME = '__Host-hr_print';
 const PRINT_GRANT_TTL_SECONDS = 10 * 60;
 // A day, so a reader who leaves the tab open overnight and prints in the
 // morning re-uses the same binding rather than losing it. The GRANT is the
 // short-lived half; this is only the thing it is bound to.
 const PRINT_COOKIE_MAX_AGE = 24 * 60 * 60;
 
-// Path=/r/ like the opt-out cookie: sent with the print route, sent with
-// nothing outside the recipient namespace.
+// Path=/ because the `__Host-` prefix requires it. Every host this worker
+// serves carries documents and nothing else, so the wider path costs nothing.
 export function printCookie(secret: string): string {
-  return `${PRINT_COOKIE_NAME}=${secret}; Path=/r/; Max-Age=${PRINT_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
+  return `${PRINT_COOKIE_NAME}=${secret}; Path=/; Max-Age=${PRINT_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
 }
 
+// Single-copy read, like the other two: a second copy of the name is a
+// shadowing attempt, and trusting neither is what makes it worthless.
 export function readPrintCookie(cookieHeader: string | null): string | null {
-  if (!cookieHeader) return null;
-  const raw = parseCookies(cookieHeader)[PRINT_COOKIE_NAME];
-  return raw && /^[0-9a-f]{32}$/.test(raw) ? raw : null;
+  return readSingleHexCookie(cookieHeader, PRINT_COOKIE_NAME);
 }
 
 export function newPrintSecret(): string {
@@ -313,6 +442,104 @@ const printMessage = (
   cookieSecret: string,
   expiresAt: number,
 ): string => `print:${slug}|${hostname.toLowerCase()}|${cookieSecret}|${expiresAt}`;
+
+// The returning reader, and why the identifier moved into a cookie.
+//
+// Until 31 August the tracker kept a random UUID in the document's
+// localStorage, and that value is how a reader who opened the same document
+// twice was recognised as one person rather than two. The opaque-origin
+// sandbox that landed that day makes every storage call inside a proxy-served
+// document throw, so the tracker minted a fresh identifier on every load: each
+// open looked like a brand-new person, the sender got another "someone opened
+// your document" email every time, and the unique-reader count inflated. A
+// cookie this worker sets is the only store the value can survive in, for the
+// same reason `hr_optout` is one.
+//
+// HttpOnly, so the sender's own HTML can neither read this value from
+// document.cookie nor write one.
+//
+// THE `__Host-` PREFIX IS THE CONTROL, and a plain name was not enough. A
+// cookie's host scope is not a property of the host that set it: any parent
+// domain can write a cookie that descendants receive. A customer who points
+// decks.acme.com at us also controls acme.com, so with a plain `hr_rid` they
+// could set `hr_rid=<value of their choosing>; Domain=acme.com; Path=/r/`
+// before a recipient ever visited, then request both documents themselves
+// carrying the same value, learn the identifiers it derives to, and recognise
+// or fabricate that reader. Browsers refuse to set a `__Host-` cookie that
+// carries a Domain attribute at all, so the name can only ever have been
+// written by this exact host.
+//
+// The prefix comes with two conditions and both are met below: Secure, and
+// `Path=/`. The path is wider than the `/r/` these cookies used to take. That
+// costs nothing — every host this worker serves carries documents and nothing
+// else — and the narrower scope was never available anyway, since the
+// first-open dedup in the database recognises a return by matching prior
+// sessions across every share of the SAME document, so a per-share cookie
+// would break recognition rather than tighten it.
+const READER_COOKIE_NAME = '__Host-hr_rid';
+// Ninety days is long enough to cover re-reading a document somebody sent you
+// and comfortably shorter than the unbounded life the localStorage value had
+// on Chrome and Firefox.
+const READER_COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
+
+export function readerCookie(secret: string): string {
+  return `${READER_COOKIE_NAME}=${secret}; Path=/; Max-Age=${READER_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+// Opting out wipes the identifier as well as recording the choice, which is
+// what the tracker's own optOut() does to the localStorage copy.
+export const READER_CLEAR_COOKIE = `${READER_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+
+export function readReaderCookie(cookieHeader: string | null): string | null {
+  return readSingleHexCookie(cookieHeader, READER_COOKIE_NAME);
+}
+
+// One value for the name, or none at all.
+//
+// A Cookie header may carry the same name more than once — that is exactly
+// what a shadowing attempt looks like, a planted cookie sitting beside the
+// genuine one — and the browser does not say which is which. Taking the last
+// one, as an ordinary name-to-value parse does, hands the choice to whoever
+// managed to write the second. Refusing the whole name instead means the
+// worker mints a fresh identifier, so a shadowing attempt costs the attacker
+// their own planted value and tells them nothing about the reader.
+//
+// The 32-hex shape is checked here too: anything else was not minted by
+// newReaderSecret or newOptOutChallenge and is not treated as though it were.
+function readSingleHexCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  let found: string | null = null;
+  for (const part of cookieHeader.split(/;\s*/)) {
+    const idx = part.indexOf('=');
+    if (idx <= 0 || part.slice(0, idx) !== name) continue;
+    if (found !== null) return null; // more than one: trust none of them
+    found = part.slice(idx + 1);
+  }
+  return found && /^[0-9a-f]{32}$/.test(found) ? found : null;
+}
+
+// The same 128 bits of randomness the print cookie carries.
+export const newReaderSecret = newPrintSecret;
+
+// What the tracker is handed is NOT the cookie's value. It is an HMAC of that
+// value and the document being read, so the identifier that exists in the page
+// is specific to one document: two shares of the same document agree, which is
+// what the database's dedup needs, and two different documents do not.
+//
+// This matters because the sender's own HTML shares a scripting context with
+// the tracker and can read anything given to it in the page (it could read the
+// localStorage value before 31 August too, since the document was not
+// sandboxed then). Binding the in-page value to the document means the worst a
+// sender's script can learn is an opaque string that is useless anywhere but
+// on their own document, and the cookie's raw value never reaches the page at
+// all.
+export async function deriveReaderId(
+  cookieSecret: string,
+  documentId: string,
+  secret: string,
+): Promise<string> {
+  return hmacHex(`reader:${cookieSecret}|${documentId}`, secret);
+}
 
 // The rate-limit identity for an abuse report, and the only thing about the
 // reporter that leaves this worker.

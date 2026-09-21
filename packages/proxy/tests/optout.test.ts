@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { issueOptOutToken } from '../src/auth.js';
+import { Jar, tokenFrom } from './cookie-jar.js';
 
 // Recipient opt-out, end to end through the worker's fetch handler.
 //
@@ -133,24 +134,36 @@ async function get(path: string, headers: Record<string, string> = {}): Promise<
   return worker.fetch(new Request(`https://htmlradar.page${path}`, { headers }), env, ctx);
 }
 
-async function post(path: string, body: Record<string, string>): Promise<Response> {
+async function post(
+  path: string,
+  body: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   const worker = (await import('../src/index.js')).default;
   const form = new FormData();
   for (const [k, v] of Object.entries(body)) form.append(k, v);
   return worker.fetch(
-    new Request(`https://htmlradar.page${path}`, { method: 'POST', body: form }),
+    new Request(`https://htmlradar.page${path}`, { method: 'POST', body: form, headers }),
     env,
     ctx,
   );
 }
 
-// The token the confirmation page hands back to its own form. Read out of the
-// rendered page rather than minted here, so the test exercises the same value
-// a recipient's browser would post.
-function tokenFrom(html: string): string {
-  const match = /name="token" value="([^"]+)"/.exec(html);
-  if (!match) throw new Error('no token in the confirmation page');
-  return match[1]!;
+// One navigation through a jar, so a multi-step flow carries its own cookies
+// the way a browser does. The confirmation is now bound to a challenge cookie
+// the page itself sets (see the note above issueOptOutToken), so a test that
+// posts a token without the browser that was given it is testing a forgery.
+async function visit(jar: Jar, path: string, headers: Record<string, string> = {}) {
+  return jar.take(await get(path, { ...jar.header(), ...headers }));
+}
+
+// Only the PREFERENCE cookies. The confirmation page also sets a short-lived
+// challenge, and a test that asserts "no cookies at all" would now be
+// asserting that the page cannot work.
+function preferenceCookies(res: Response): string[] {
+  return res.headers
+    .getSetCookie()
+    .filter((c) => c.startsWith('__Host-hr_optout=') || c.startsWith('__Host-hr_rid='));
 }
 
 const CONFIRM_OFF = 'Turn off read tracking for HTMLRadar links in this browser?';
@@ -181,7 +194,9 @@ describe('recipient opt-out', () => {
   it('asks rather than acts on GET ?optout=1 — a confirmation page and no cookie', async () => {
     const res = await get('/r/acme-proposal?optout=1');
     expect(res.status).toBe(200);
-    expect(res.headers.getSetCookie()).toEqual([]);
+    // No PREFERENCE is written. The page does set its own challenge cookie,
+    // which is what binds the confirmation to this browser.
+    expect(preferenceCookies(res)).toEqual([]);
     const html = await res.text();
     expect(html).toContain(CONFIRM_OFF);
     expect(html).toContain('method="POST" action="/r/acme-proposal"');
@@ -190,70 +205,76 @@ describe('recipient opt-out', () => {
   });
 
   it('asks rather than acts on GET ?optout=0 — the opposite question, still no cookie', async () => {
-    const res = await get('/r/acme-proposal?optout=0', { Cookie: 'hr_optout=1' });
+    const res = await get('/r/acme-proposal?optout=0', { Cookie: '__Host-hr_optout=1' });
     expect(res.status).toBe(200);
-    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(preferenceCookies(res)).toEqual([]);
     const html = await res.text();
     expect(html).toContain(CONFIRM_ON);
     expect(html).toContain('name="optout" value="0"');
   });
 
   it('sets the opt-out cookie on the confirming POST, with exactly the attributes the flow depends on', async () => {
-    const token = tokenFrom(await (await get('/r/acme-proposal?optout=1')).text());
-    const res = await post('/r/acme-proposal', { optout: '1', token });
+    const jar = new Jar();
+    const token = tokenFrom(await (await visit(jar, '/r/acme-proposal?optout=1')).text());
+    const res = await post('/r/acme-proposal', { optout: '1', token }, jar.header());
     expect(res.status).toBe(303);
     expect(res.headers.get('Location')).toBe('/r/acme-proposal');
     expect(res.headers.getSetCookie()).toContain(
-      'hr_optout=1; Path=/r/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax',
+      '__Host-hr_optout=1; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax',
     );
   });
 
   it('writes nothing for a forged or expired token, and asks again', async () => {
     const res = await post('/r/acme-proposal', { optout: '1', token: '9999999999.deadbeef' });
     expect(res.status).toBe(400);
-    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(preferenceCookies(res)).toEqual([]);
     expect(await res.text()).toContain(CONFIRM_OFF);
 
     // And an expiry is a real expiry, not decoration: mint one, walk the
     // clock past ten minutes, and it stops being spendable.
+    const challenge = 'd'.repeat(32);
+    const held = { cookie: `__Host-hr_optout_c=${challenge}` };
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const stale = await issueOptOutToken(
       '1',
       'acme-proposal',
       'htmlradar.page',
+      challenge,
       env.SESSION_SECRET,
     );
     vi.setSystemTime(new Date('2026-01-01T00:11:00Z'));
-    const tooLate = await post('/r/acme-proposal', { optout: '1', token: stale });
+    const tooLate = await post('/r/acme-proposal', { optout: '1', token: stale }, held);
     vi.useRealTimers();
     expect(tooLate.status).toBe(400);
-    expect(tooLate.headers.getSetCookie()).toEqual([]);
+    expect(preferenceCookies(tooLate)).toEqual([]);
   });
 
   // A token is bound to its answer and to its share, so neither can be
   // swapped out from under the recipient.
   it('will not spend an opt-out token as an opt-in, or on another share', async () => {
-    const token = tokenFrom(await (await get('/r/acme-proposal?optout=1')).text());
-    const flipped = await post('/r/acme-proposal', { optout: '0', token });
+    const jar = new Jar();
+    const token = tokenFrom(await (await visit(jar, '/r/acme-proposal?optout=1')).text());
+    const flipped = await post('/r/acme-proposal', { optout: '0', token }, jar.header());
     expect(flipped.status).toBe(400);
-    expect(flipped.headers.getSetCookie()).toEqual([]);
+    expect(preferenceCookies(flipped)).toEqual([]);
 
-    const elsewhere = await post('/r/other-deck', { optout: '1', token });
+    const elsewhere = await post('/r/other-deck', { optout: '1', token }, jar.header());
     expect(elsewhere.status).toBe(400);
-    expect(elsewhere.headers.getSetCookie()).toEqual([]);
+    expect(preferenceCookies(elsewhere)).toEqual([]);
   });
 
   // The claim the whole design rests on: cookies ride along on a navigation
   // to /r/* regardless of the sandbox the previous document ran under, so a
   // returning request identifies itself even though storage could not.
   it('serves the un-injected document to a request carrying the hr_optout cookie', async () => {
-    const res = await get('/r/acme-proposal', { Cookie: 'hr_optout=1' });
+    const res = await get('/r/acme-proposal', { Cookie: '__Host-hr_optout=1' });
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).not.toContain(TRACKER_TAG);
     expect(html).not.toContain('HTMLRadarConfig');
-    // Nothing to re-issue — the recipient already holds the cookie.
+    // Nothing to re-issue — the recipient already holds the cookie — and no
+    // reader identifier is minted for somebody who opted out.
     expect(res.headers.getSetCookie()).toEqual([]);
     expectSandboxed(res);
   });
@@ -263,17 +284,20 @@ describe('recipient opt-out', () => {
     const html = await res.text();
     expect(html).toContain(TRACKER_TAG);
     expect(html).toContain('HTMLRadarConfig');
-    expect(res.headers.getSetCookie()).toEqual([]);
+    // Serving a tracked document writes no PREFERENCE. It does mint the
+    // returning-reader identifier (`hr_rid`, see reader-identity.test.ts),
+    // which is why this names the opt-out cookie rather than asserting that
+    // the response sets nothing at all.
+    expect(res.headers.getSetCookie().filter((c) => c.startsWith('__Host-hr_optout='))).toEqual([]);
   });
 
   it('clears the cookie on the confirming POST for ?optout=0', async () => {
-    const token = tokenFrom(
-      await (await get('/r/acme-proposal?optout=0', { Cookie: 'hr_optout=1' })).text(),
-    );
-    const res = await post('/r/acme-proposal', { optout: '0', token });
+    const jar = new Jar().set('__Host-hr_optout', '1');
+    const token = tokenFrom(await (await visit(jar, '/r/acme-proposal?optout=0')).text());
+    const res = await post('/r/acme-proposal', { optout: '0', token }, jar.header());
     expect(res.status).toBe(303);
     expect(res.headers.getSetCookie()).toContain(
-      'hr_optout=; Path=/r/; Max-Age=0; Secure; HttpOnly; SameSite=Lax',
+      '__Host-hr_optout=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax',
     );
   });
 

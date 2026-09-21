@@ -220,8 +220,8 @@ describe('the response headers', () => {
 
   it('sets the print cookie only when it was given a new one', () => {
     expect(page().headers.get('Set-Cookie')).toBeNull();
-    const withCookie = page({ setCookie: 'hr_print=abc; Path=/r/; HttpOnly' });
-    expect(withCookie.headers.get('Set-Cookie')).toBe('hr_print=abc; Path=/r/; HttpOnly');
+    const withCookie = page({ setCookie: '__Host-hr_print=abc; Path=/r/; HttpOnly' });
+    expect(withCookie.headers.get('Set-Cookie')).toBe('__Host-hr_print=abc; Path=/r/; HttpOnly');
   });
 
   it('marks itself as HTMLRadar’s own page, so the worker leaves its origin alone', () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   EMAIL_REGEX,
   getFingerprint,
@@ -46,5 +46,43 @@ describe('identity storage', () => {
     optOut();
     expect(isOptedOut()).toBe(true);
     expect(getStoredEmail()).toBe(null);
+  });
+});
+
+// The defect this file's storage cannot solve, pinned so nobody "simplifies"
+// boot() back to calling getFingerprint() unconditionally.
+//
+// A document served through the proxy carries a `sandbox` CSP with no
+// allow-same-origin, so it runs in an opaque origin where every localStorage
+// call throws. getFingerprint() catches that and returns a fresh random value,
+// which means every load is a new reader: a sender got a fresh "someone opened
+// your document" email on every open, and unique-reader counts inflated. The
+// answer is the proxy's readerId, not anything in this module — see
+// packages/proxy/tests/reader-identity.test.ts.
+describe('when the document is sandboxed and storage throws', () => {
+  const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (real) Object.defineProperty(window, 'localStorage', real);
+  });
+
+  it('hands back a DIFFERENT fingerprint on every call', () => {
+    expect(getFingerprint()).not.toBe(getFingerprint());
+  });
+
+  it('still answers the other questions without throwing', () => {
+    expect(isOptedOut()).toBe(false);
+    expect(getStoredEmail()).toBe(null);
+    expect(() => setStoredEmail('marc@example.com')).not.toThrow();
+    expect(() => optOut()).not.toThrow();
   });
 });

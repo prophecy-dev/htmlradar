@@ -70,7 +70,14 @@ async function boot(): Promise<void> {
     return;
   }
 
-  const fingerprint = getFingerprint();
+  // The proxy's identifier wins, and when it is there we never touch storage.
+  // A proxy-served document sits in an opaque origin where every localStorage
+  // call throws, so getFingerprint() would hand back a fresh random value on
+  // every single load and no returning reader would ever be recognised — which
+  // is exactly what happened from 31 August until this line existed.
+  // getFingerprint() still covers the directly-embedded tracker on a
+  // self-hosted page, where storage works normally.
+  const fingerprint = config.readerId ?? getFingerprint();
   const storedEmail = getStoredEmail();
 
   let email: string | null = null;

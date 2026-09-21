@@ -94,6 +94,7 @@ export function resolveConfig(scriptEl: HTMLScriptElement | null): TrackerConfig
     debug: fromRuntime.debug ?? false,
   };
   if (fromRuntime.email) config.email = fromRuntime.email;
+  if (fromRuntime.readerId) config.readerId = fromRuntime.readerId;
   if (fromRuntime.geo) config.geo = fromRuntime.geo;
   return config;
 }

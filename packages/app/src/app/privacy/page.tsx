@@ -50,10 +50,23 @@ export default function PrivacyPage() {
                   the share requires one.
                 </li>
                 <li>
-                  A <strong className="text-ink">random fingerprint</strong> — a UUID we generate
-                  and store in their browser's{' '}
-                  <code className="font-mono text-[14px] text-signal-dark">localStorage</code>. No
-                  cross-site value.
+                  A <strong className="text-ink">random fingerprint</strong> — a value we generate
+                  so that the same person opening the same document twice counts as one reader
+                  rather than two. On a document we serve, it lives in a cookie named{' '}
+                  <code className="font-mono text-[14px] text-signal-dark">__Host-hr_rid</code>. The
+                  browser sends that cookie only to the exact host that served the document, and
+                  marks it so that scripts on the page cannot read it. It expires after 90 days.
+                  Each document gets a different identifier derived from it, so the value one
+                  document is given does not match the value another document is given. The page the
+                  sender wrote is given that document's value and can read it.
+                </li>
+                <li>
+                  If you <strong className="text-ink">self-host</strong> and embed the tracker
+                  directly in your own page, there is no cookie. The tracker keeps a random value in
+                  that site's{' '}
+                  <code className="font-mono text-[14px] text-signal-dark">localStorage</code>,
+                  which is shared by every page on that site rather than being one value per
+                  document.
                 </li>
                 <li>
                   <strong className="text-ink">Session metrics</strong>: start time, total active
@@ -181,9 +194,13 @@ export default function PrivacyPage() {
                 <code className="font-mono text-[14px] text-signal-dark">
                   window.HTMLRadar.optOut()
                 </code>{' '}
-                in the browser console of any tracked page. The opt-out persists in their
-                localStorage and applies to every HTMLRadar link they open in that browser
-                afterwards.
+                in the browser console of any tracked page, and confirming on the page that opens.
+                On a document we serve, confirming records the choice in a cookie on the host that
+                served the document, deletes the fingerprint cookie, and applies to every HTMLRadar
+                link opened on that host afterwards. While it is in place we set no fingerprint and
+                put no tracker on the page. On a directly embedded tracker the choice is stored in
+                that site's localStorage; the script still downloads with the page, then stops
+                before recording anything.
               </p>
               <p className="mt-3">
                 The same page also carries a link to report it, which works the same way whether it
@@ -193,9 +210,22 @@ export default function PrivacyPage() {
 
             <Section title="Cookies">
               <p>
-                The hosted service uses session cookies for authentication, set when you sign in.
-                Tracked share links may set a temporary cookie when a password is required, scoped
-                to that share. We do not use third-party cookies for analytics or advertising.
+                The hosted service uses session cookies for authentication, set when you sign in. A
+                tracked link sets cookies on the host that serves the document: the fingerprint
+                described above (
+                <code className="font-mono text-[14px] text-signal-dark">__Host-hr_rid</code>
+                ), one holding the recipient&rsquo;s opt-out choice (
+                <code className="font-mono text-[14px] text-signal-dark">__Host-hr_optout</code>),
+                one that ties an opt-out confirmation to the browser that asked for it (
+                <code className="font-mono text-[14px] text-signal-dark">__Host-hr_optout_c</code>,
+                ten minutes), one that permits printing (
+                <code className="font-mono text-[14px] text-signal-dark">__Host-hr_print</code>),
+                and one that stands in for a password or an email once the recipient has passed that
+                gate. The <code className="font-mono text-[14px] text-signal-dark">__Host-</code>{' '}
+                names are ones a browser will only accept from the exact host that serves the
+                document, so no other site can write them. The browser sends each of them only to
+                the host that set it, and marks them so that scripts on the page cannot read them.
+                We do not use third-party cookies for analytics or advertising.
               </p>
               <p className="mt-3">
                 On your first visit to htmlradar.com, we also set a cookie named{' '}

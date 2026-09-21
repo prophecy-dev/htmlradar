@@ -294,8 +294,19 @@ async function expectEveryRouteServed(host: string, label: string): Promise<void
   const written = await fetchAs(`https://${host}/r/acme-proposal`, {
     method: 'POST',
     body: new URLSearchParams({ optout: '1', token }),
+    // The confirmation is bound to the browser that was asked, so the post
+    // carries the challenge the page set. Without it this would be a forgery.
+    headers: { Cookie: challengeOf(asked) },
   });
   expect(written.status, `${label}: the opt-out write`).toBe(303);
+}
+
+// The challenge cookie the confirmation page sets, as a Cookie header. The
+// confirmation is bound to the browser that asked the question, so every
+// genuine post carries this back.
+function challengeOf(res: Response): string {
+  const line = res.headers.getSetCookie().find((c) => c.startsWith('__Host-hr_optout_c='));
+  return line ? line.split(';')[0]! : '';
 }
 
 beforeEach(() => {
@@ -482,10 +493,12 @@ describe('a revoked or expired custom share behaves as it does on the apex', () 
 
       const asked = await fetchAs(`https://${LIVE.hostname}/r/acme-proposal?optout=1`);
       expect(asked.status, `${label}: the opt-out question`).toBe(200);
+      const challenge = challengeOf(asked);
       const token = /name="token" value="([^"]+)"/.exec(await asked.text())?.[1] ?? '';
       const written = await fetchAs(`https://${LIVE.hostname}/r/acme-proposal`, {
         method: 'POST',
         body: new URLSearchParams({ optout: '1', token }),
+        headers: { Cookie: challenge },
       });
       expect(written.status, `${label}: the opt-out write`).toBe(303);
     }
@@ -506,23 +519,31 @@ describe('the opt-out token is bound to the hostname that minted it', () => {
   it('refuses a token minted on the apex when it is spent on a customer domain', async () => {
     getShareBySlug.mockResolvedValue(apexShare);
     const asked = await fetchAs('https://htmlradar.page/r/acme-proposal?optout=1');
+    const challenge = challengeOf(asked);
     const token = /name="token" value="([^"]+)"/.exec(await asked.text())?.[1] ?? '';
 
+    // Even carrying the challenge it was minted with, the token is refused:
+    // the hostname is in the signature too.
     getShareBySlug.mockResolvedValue(customShare);
     const elsewhere = await fetchAs(`https://${LIVE.hostname}/r/acme-proposal`, {
       method: 'POST',
       body: new URLSearchParams({ optout: '1', token }),
+      headers: { Cookie: challenge },
     });
     expect(elsewhere.status).toBe(400);
-    expect(elsewhere.headers.getSetCookie()).toEqual([]);
+    expect(
+      elsewhere.headers.getSetCookie().filter((c) => c.startsWith('__Host-hr_optout=')),
+    ).toEqual([]);
   });
 
   it('spends a token on the host that minted it', async () => {
     const asked = await fetchAs(`https://${LIVE.hostname}/r/acme-proposal?optout=1`);
+    const challenge = challengeOf(asked);
     const token = /name="token" value="([^"]+)"/.exec(await asked.text())?.[1] ?? '';
     const written = await fetchAs(`https://${LIVE.hostname}/r/acme-proposal`, {
       method: 'POST',
       body: new URLSearchParams({ optout: '1', token }),
+      headers: { Cookie: challenge },
     });
     expect(written.status).toBe(303);
     // No Domain attribute: the preference belongs to the exact host that set
