@@ -1,20 +1,20 @@
 # @htmlradar/app — the dashboard
 
 Somnia-internal build: Next.js 16 on a Cloudflare Worker (via `@opennextjs/cloudflare`),
-data in D1 (`DB`), files in R2 (`DOCS_BUCKET`), sign-in by Privy e-mail login. No
+data in D1 (`DB`), files in R2 (`DOCS_BUCKET`), sign-in by Privy (Google or e-mail code). No
 Supabase, no billing, no marketing pages. Bindings live in `wrangler.jsonc`; settings
 are listed in `.env.example`.
 
 ## Sign-in
 
-`/login` runs Privy with e-mail codes only. The page posts the Privy **identity token** to
+`/login` runs Privy with Google and e-mail codes. The page posts the Privy **identity token** to
 `/api/auth/session`, which verifies it against the Privy app's JWKS (`PRIVY_APP_ID`), reads
-the e-mail from its linked accounts and, if the domain is in `ALLOWED_EMAIL_DOMAINS`
+the e-mails from its linked accounts (`email` and `google_oauth` accounts only) and, if the domain is in `ALLOWED_EMAIL_DOMAINS`
 (default `somnia.foundation`), sets a 12-hour `hr_session` cookie signed with
 `SESSION_SECRET`. The middleware checks that cookie on every request (and the domain again).
 Anyone signed in gets a profile, keyed by their lower-cased e-mail, on first visit.
 
-In the Privy dashboard: e-mail login on, the dashboard origin in the allowed origins, and
+In the Privy dashboard: Google and e-mail login on, the dashboard origin in the allowed origins, and
 "Return user data in an identity token" on.
 
 `/api/v1/*` skips the sign-in: the public API (and `packages/mcp`) authenticates with

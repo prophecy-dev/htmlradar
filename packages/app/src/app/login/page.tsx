@@ -24,7 +24,8 @@ export default async function LoginPage({
       <h1 className="font-serif text-[32px] text-ink">Sign in</h1>
       <p className="mt-4 text-[15px] leading-relaxed text-ink-soft">
         HTMLRadar here is for Somnia staff. Sign in with your{' '}
-        {domains.map((d) => `@${d}`).join(' or ')} e-mail; we send you a one-time code.
+        {domains.map((d) => `@${d}`).join(' or ')} Google account, or with that e-mail and a
+        one-time code.
       </p>
       {appId ? (
         <LoginClient appId={appId} next={next} signout={signout === '1'} />

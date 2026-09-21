@@ -1,7 +1,7 @@
 // Cloudflare Worker config for the dashboard (Next.js via @opennextjs/cloudflare).
 // Build and deploy from WSL/Linux/CI: `pnpm --filter @htmlradar/app deploy`.
 //
-// Sign-in is Privy e-mail login (see README); /api/v1/* uses API keys instead.
+// Sign-in is Privy, Google or e-mail code (see README); /api/v1/* uses API keys instead.
 //
 // Secrets and plain vars (`wrangler secret put`, or .dev.vars locally):
 //   PRIVY_APP_ID           the Privy app used for e-mail login

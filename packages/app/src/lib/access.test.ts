@@ -3,7 +3,7 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import {
   SESSION_TTL_SECONDS,
   emailAllowed,
-  emailFromLinkedAccounts,
+  emailsFromLinkedAccounts,
   resolveAccessEmail,
   signSession,
   verifyPrivyIdentityToken,
@@ -32,22 +32,28 @@ describe('emailAllowed', () => {
   });
 });
 
-describe('emailFromLinkedAccounts', () => {
-  it('reads the e-mail account from an array or a JSON string', () => {
+describe('emailsFromLinkedAccounts', () => {
+  it('reads e-mail and Google accounts from an array or a JSON string', () => {
     const accounts = [
       { type: 'wallet', address: '0xabc' },
       { type: 'email', address: 'Ann@Somnia.Foundation' },
+      { type: 'google_oauth', email: 'ann.g@somnia.foundation', subject: '123' },
     ];
-    expect(emailFromLinkedAccounts(accounts)).toBe('ann@somnia.foundation');
-    expect(emailFromLinkedAccounts(JSON.stringify(accounts))).toBe('ann@somnia.foundation');
+    const want = ['ann@somnia.foundation', 'ann.g@somnia.foundation'];
+    expect(emailsFromLinkedAccounts(accounts)).toEqual(want);
+    expect(emailsFromLinkedAccounts(JSON.stringify(accounts))).toEqual(want);
   });
 
   it('ignores other account types that carry an e-mail', () => {
     expect(
-      emailFromLinkedAccounts([{ type: 'google_oauth', email: 'ann@somnia.foundation' }]),
-    ).toBe(null);
-    expect(emailFromLinkedAccounts('not json')).toBe(null);
-    expect(emailFromLinkedAccounts(undefined)).toBe(null);
+      emailsFromLinkedAccounts([
+        { type: 'discord_oauth', email: 'ann@somnia.foundation' },
+        { type: 'github_oauth', email: 'ann@somnia.foundation' },
+        { type: 'google_oauth', address: 'ann@somnia.foundation' },
+      ]),
+    ).toEqual([]);
+    expect(emailsFromLinkedAccounts('not json')).toEqual([]);
+    expect(emailsFromLinkedAccounts(undefined)).toEqual([]);
   });
 });
 
@@ -162,7 +168,7 @@ describe('verifyPrivyIdentityToken', () => {
     const token = await sign({
       linked_accounts: JSON.stringify([{ type: 'email', address: 'ann@somnia.foundation' }]),
     });
-    expect(await verifyPrivyIdentityToken(token, 'app-ok')).toBe('ann@somnia.foundation');
+    expect(await verifyPrivyIdentityToken(token, 'app-ok')).toEqual(['ann@somnia.foundation']);
   });
 
   it('rejects another app, another issuer, or a bad signature', async () => {
