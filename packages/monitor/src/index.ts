@@ -3090,8 +3090,19 @@ export async function sentinel(env: Env, nowMs: number = Date.now()): Promise<vo
 // Four moments, one Telegram message each, on the five-minute cron:
 //   1. a real sign-up, with where they came from
 //   2. a real user's FIRST share — the moment someone stops browsing
-//   3. an outside read of a real user's document — their recipient, not them
-//   4. upgrade interest: /upgrade viewed, or the two-link cap refusing a create
+//   3. the FIRST outside read of a share — "a link you sent got opened", once
+//   4. money moving: an upgrade to Pro, a cancellation, a drop back to free
+//   5. money being considered: the free cap refusing a link, the upgrade page
+//      being opened — at most once per user per day each
+// A custom domain going live is the sixth, and it is said by the domain
+// lifecycle (finishPromotion) because that is where the fact is known.
+//
+// What used to be here and is not any more: every later read of a share. A
+// week of the old feed was 25 messages and most were "X's document was read",
+// which told the founder nothing he could act on. Later reads are now one
+// counted line a day (userFeedDaily), which also carries the day's intent
+// totals — the buying signals are the point of the feed, so they are kept and
+// rationed rather than dropped.
 //
 // "Once" is the hard part, and it is not solved in memory. The window is
 // [cursor, now) — closed at BOTH ends, read from user_feed_cursor (schema/051),
@@ -3148,6 +3159,7 @@ interface FeedShareRow {
 }
 
 interface FeedSessionRow {
+  share_id: string;
   viewers: { email: string | null; country_code: string | null; device_type: string | null } | null;
   document_shares: {
     slug: string;
@@ -3163,6 +3175,96 @@ interface FeedEventRow {
   properties?: Record<string, unknown>;
 }
 
+/** What each money event reads as. The keys are the whole query filter. */
+const BILLING_LINE: Record<string, string> = {
+  'subscription.activated': 'upgraded to Pro',
+  'subscription.canceled': 'cancelled Pro',
+  'subscription.revoked': 'dropped back to free',
+};
+
+/**
+ * Buying intent. With two paying customers these are the most valuable lines
+ * in the feed, and they were also the loudest: intent repeats, because someone
+ * who opens the upgrade page opens it three times. So they are kept and rate-
+ * limited — at most one per user per event per day, the "already" derived from
+ * app_events itself, the same way a first read is derived from sessions.
+ *
+ * free_tier.cap_card_seen is deliberately not here: it fires hundreds of times
+ * a week and means only that a page rendered.
+ */
+const INTENT_LINE: Record<string, string> = {
+  'free_tier.share_cap_hit': 'hit the free link limit',
+  'upgrade.viewed': 'looked at the upgrade page',
+};
+
+const DAY_MS = 24 * 60 * 60_000;
+
+type FeedGet = <T>(path: string) => Promise<T[]>;
+
+function feedHeaders(env: Env): Record<string, string> {
+  return {
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+/** Service-role read. Names the table it failed on, which is the whole log. */
+function feedGet(env: Env): FeedGet {
+  const headers = feedHeaders(env);
+  return async <T>(path: string): Promise<T[]> => {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, { headers });
+    if (!res.ok) throw new Error(`${path.split('?')[0]} read HTTP ${res.status}`);
+    return (await res.json()) as T[];
+  };
+}
+
+/**
+ * Was this share opened by someone outside the owner before `before`? That one
+ * question is all the state "first read" needs, and the sessions table already
+ * answers it — no new column, no new table, nothing to keep in sync.
+ *
+ * The owner's own opens don't count, here for the same reason they don't count
+ * in the window: a user clicking their own link to check it is the normal way
+ * to use the product, and letting it consume the "first read" would silence the
+ * one message the recipient's open is supposed to produce.
+ *
+ * ponytail: looks at up to 200 earlier sessions. A share whose first 200 opens
+ * were all the owner's own would announce a late read as a first one; add an
+ * ordered page-through if a share ever gets that much self-testing.
+ */
+async function openedBefore(
+  get: FeedGet,
+  shareId: string,
+  before: string,
+  ownerDomain: string,
+): Promise<boolean> {
+  const rows = await get<{ viewers: { email: string | null } | null }>(
+    `sessions?share_id=eq.${shareId}&started_at=lt.${before}&select=viewers(email)&limit=200`,
+  );
+  return rows.some((r) => domainOf(r.viewers?.email) !== ownerDomain);
+}
+
+/**
+ * Did this user already do this in the day before the window opened? If so the
+ * founder has heard it, and hearing it again teaches him nothing. One row is
+ * enough to know, so the query asks for one.
+ */
+async function intentSaidToday(
+  get: FeedGet,
+  userId: string,
+  event: string,
+  sinceMs: number,
+): Promise<boolean> {
+  const from = encodeURIComponent(new Date(sinceMs - DAY_MS).toISOString());
+  const to = encodeURIComponent(new Date(sinceMs).toISOString());
+  const rows = await get<{ event: string }>(
+    `app_events?user_id=eq.${userId}&event=eq.${event}` +
+      `&timestamp=gte.${from}&timestamp=lt.${to}&select=event&limit=1`,
+  );
+  return rows.length > 0;
+}
+
 /**
  * `nowMs` is the scheduled event's timestamp, not Date.now(): it is the closing
  * edge of the window AND the value written back as the cursor, so the two can
@@ -3173,16 +3275,8 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
   // minutes, and don't advance the cursor past moments nobody heard.
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
 
-  const headers = {
-    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-    'Content-Type': 'application/json',
-  };
-  const get = async <T>(path: string): Promise<T[]> => {
-    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, { headers });
-    if (!res.ok) throw new Error(`${path.split('?')[0]} read HTTP ${res.status}`);
-    return (await res.json()) as T[];
-  };
+  const headers = feedHeaders(env);
+  const get = feedGet(env);
 
   const cursor = await get<{ last_run_at: string }>('user_feed_cursor?id=eq.1&select=last_run_at');
   const sinceMs = cursor[0] ? Date.parse(cursor[0].last_run_at) : nowMs - USER_FEED_FALLBACK_MS;
@@ -3210,17 +3304,18 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
   const reads = (
     await get<FeedSessionRow>(
       `sessions?${inWindow('started_at')}` +
-        `&select=viewers(email,country_code,device_type),` +
+        `&select=share_id,viewers(email,country_code,device_type),` +
         `document_shares(slug,owner_id,document_id,documents(title))`,
     )
   ).filter((s) => s.document_shares !== null && s.document_shares.slug !== DEMO_SLUG);
 
-  // free_tier.share_cap_hit is the create the two-link cap refused (the
-  // pre-check in docs/[id]/actions.ts, ahead of the schema/027 trigger);
-  // upgrade.viewed is someone reading the pricing. Both are money-shaped.
-  const intents = await get<FeedEventRow>(
+  // Money moving (the Polar webhook writes these) and money being considered.
+  // One read for both: same table, same window, and the difference is only
+  // which map the event's name is in.
+  const events = await get<FeedEventRow>(
     `app_events?${inWindow('timestamp')}` +
-      `&event=in.(upgrade.viewed,free_tier.share_cap_hit)&select=event,user_id`,
+      `&event=in.(${[...Object.keys(BILLING_LINE), ...Object.keys(INTENT_LINE)].join(',')})` +
+      `&select=event,user_id`,
   );
 
   // profiles.id is auth.users.id, but documents/document_shares/app_events all
@@ -3230,7 +3325,7 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
   const needed = new Set<string>([
     ...shares.map((s) => s.owner_id),
     ...reads.map((s) => s.document_shares!.owner_id),
-    ...intents.map((e) => e.user_id).filter((id): id is string => id !== null),
+    ...events.map((e) => e.user_id).filter((id): id is string => id !== null),
   ]);
   if (needed.size > 0) {
     const rows = await get<FeedProfileRow>(
@@ -3259,7 +3354,16 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
     const provider = typeof props['provider'] === 'string' ? props['provider'] : '';
     const referrer = typeof props['first_referrer'] === 'string' ? props['first_referrer'] : '';
     const landing = typeof props['first_landing'] === 'string' ? props['first_landing'] : '';
-    const via = [hostOf(referrer), landing].filter(Boolean).join(' ') || 'source unknown';
+    // first_utm_source is the campaign tag from the visitor's very first page
+    // view (events-client's first-touch). It leads, because a tagged arrival
+    // names a channel we chose to be in; an assistant such as chatgpt.com
+    // sends no referrer at all, so without this the line says "source
+    // unknown" for exactly the traffic worth knowing about. Deduped: a tag
+    // and a referrer host are often the same word.
+    const campaign = typeof props['first_utm_source'] === 'string' ? props['first_utm_source'] : '';
+    const via =
+      [...new Set([campaign, hostOf(referrer), landing].filter(Boolean))].join(' ') ||
+      'source unknown';
     messages.push({
       source: 'signup',
       text: `New sign-up: ${domainOf(p.email)}${provider ? ` (${provider})` : ''} via ${via}`,
@@ -3287,9 +3391,10 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
     }
   }
 
-  // An owner opening their own link is not a read, and neither is the same
-  // recipient's second page-open a minute later — one message per document per
-  // run, because the news is "somebody outside looked at it", once.
+  // An owner opening their own link is not a read, the same recipient's second
+  // page-open a minute later is not news, and neither is the tenth stranger
+  // next week: a share earns exactly one message, the first time somebody
+  // outside opens it. Everything after is a number in the daily line.
   const toldAbout = new Set<string>();
   for (const r of reads) {
     const share = r.document_shares!;
@@ -3298,28 +3403,34 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
     const owner = domainOf(email);
     // '' is an anonymous viewer, which is outside by definition.
     if (domainOf(r.viewers?.email) === owner) continue;
-    if (toldAbout.has(share.document_id)) continue;
-    toldAbout.add(share.document_id);
+    if (toldAbout.has(r.share_id)) continue;
+    // Marked before the lookup, so two opens in one window cost one query.
+    toldAbout.add(r.share_id);
+    if (await openedBefore(get, r.share_id, from, owner)) continue;
     messages.push({
-      source: 'outside-read',
+      source: 'first-read',
       text:
-        `${owner}'s '${share.documents?.title ?? 'untitled'}' was read from ` +
+        `First read: ${owner}'s '${share.documents?.title ?? 'untitled'}' opened from ` +
         `${r.viewers?.country_code ?? '??'}/${r.viewers?.device_type ?? 'unknown'}`,
-      meta: { document_id: share.document_id },
+      meta: { share_id: r.share_id, document_id: share.document_id },
     });
   }
 
-  const intentSeen = new Set<string>();
-  for (const e of intents) {
+  const eventSeen = new Set<string>();
+  for (const e of events) {
     const email = e.user_id ? emails.get(e.user_id) : undefined;
     if (!email || isInternal(email)) continue;
     const key = `${e.user_id}:${e.event}`;
-    if (intentSeen.has(key)) continue;
-    intentSeen.add(key);
-    const what = e.event === 'upgrade.viewed' ? 'viewed upgrade' : 'hit the free limit';
+    if (eventSeen.has(key)) continue;
+    eventSeen.add(key);
+    const intent = INTENT_LINE[e.event];
+    // Money moving is said every time it happens; money being considered is
+    // said once a day. Nothing here is throttled in memory — a redeploy
+    // between two runs must not turn one message a day back into twenty.
+    if (intent && (await intentSaidToday(get, e.user_id!, e.event, sinceMs))) continue;
     messages.push({
-      source: 'upgrade-interest',
-      text: `${domainOf(email)} ${what}`,
+      source: intent ? 'intent' : 'billing',
+      text: `${domainOf(email)} ${intent ?? BILLING_LINE[e.event]}`,
       meta: { user_id: e.user_id, event: e.event },
     });
   }
@@ -3339,6 +3450,101 @@ export async function userFeed(env: Env, nowMs: number = Date.now()): Promise<vo
     body: JSON.stringify({ last_run_at: at, updated_at: at }),
   });
   if (!patch.ok) throw new Error(`user_feed_cursor write HTTP ${patch.status}`);
+}
+
+/**
+ * The other half of the read story: everything the live feed deliberately did
+ * not say, as one line a day on the 03:30 UTC cron.
+ *
+ * No cursor, on purpose. The window is simply the 24 hours before the cron's
+ * own timestamp, so a run that dies loses a line instead of double-counting
+ * one — the opposite trade from the live feed, and the right one for a number
+ * nobody acts on. A quiet day says nothing at all; silence here means no reads,
+ * and the sentinel is what proves the cron is alive.
+ */
+export async function userFeedDaily(env: Env, nowMs: number = Date.now()): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
+  const get = feedGet(env);
+  const from = encodeURIComponent(new Date(nowMs - DAY_MS).toISOString());
+  const to = encodeURIComponent(new Date(nowMs).toISOString());
+
+  const rows = (
+    await get<FeedSessionRow>(
+      `sessions?started_at=gte.${from}&started_at=lt.${to}` +
+        `&select=share_id,viewers(email,country_code,device_type),` +
+        `document_shares(slug,owner_id,document_id,documents(title))`,
+    )
+  ).filter((s) => s.document_shares !== null && s.document_shares.slug !== DEMO_SLUG);
+
+  // The intent events the live feed said once each: here they are a total, so
+  // a user who came back to the upgrade page all day shows up as the number he
+  // is rather than as one line that undersells him.
+  const intents = (
+    await get<FeedEventRow>(
+      `app_events?timestamp=gte.${from}&timestamp=lt.${to}` +
+        `&event=in.(${Object.keys(INTENT_LINE).join(',')})&select=event,user_id`,
+    )
+  ).filter((e) => e.user_id !== null);
+  if (rows.length === 0 && intents.length === 0) return;
+
+  const needed = new Set<string>([
+    ...rows.map((r) => r.document_shares!.owner_id),
+    ...intents.map((e) => e.user_id!),
+  ]);
+  const emails = new Map<string, string>();
+  for (const p of await get<FeedProfileRow>(
+    `profiles?id=in.(${[...needed].join(',')})&select=id,email`,
+  )) {
+    emails.set(p.id, p.email);
+  }
+  const ours = (id: string | null): boolean => {
+    const email = id ? emails.get(id) : undefined;
+    return !email || isInternal(email);
+  };
+
+  // The same three exclusions as the live feed, so the count and the messages
+  // can never tell two different stories: us, the demo link, and an owner
+  // opening their own document.
+  const counted = rows.filter(
+    (r) =>
+      !ours(r.document_shares!.owner_id) &&
+      domainOf(r.viewers?.email) !== domainOf(emails.get(r.document_shares!.owner_id)),
+  );
+
+  const parts: string[] = [];
+  const meta: Record<string, unknown> = { reads: counted.length };
+  if (counted.length > 0) {
+    const perDoc = new Map<string, number>();
+    for (const r of counted) {
+      const id = r.document_shares!.document_id;
+      perDoc.set(id, (perDoc.get(id) ?? 0) + 1);
+    }
+    const [topId, topReads] = [...perDoc].sort((a, b) => b[1] - a[1])[0]!;
+    const top = counted.find((r) => r.document_shares!.document_id === topId)!.document_shares!;
+    const senders = new Set(counted.map((r) => r.document_shares!.owner_id)).size;
+    parts.push(
+      `${counted.length} read${counted.length === 1 ? '' : 's'} ` +
+        `across ${senders} sender${senders === 1 ? '' : 's'}`,
+      `most read '${top.documents?.title ?? 'untitled'}' ` +
+        `(${domainOf(emails.get(top.owner_id))}) with ${topReads}`,
+    );
+    meta['senders'] = senders;
+    meta['document_id'] = topId;
+  }
+  // Phrased as a count, so "1 hit the free limit" and "4 hit the free limit"
+  // are the same sentence. Absent when zero rather than said as a zero.
+  for (const [event, label] of [
+    ['free_tier.share_cap_hit', 'hit the free limit'],
+    ['upgrade.viewed', 'looked at the upgrade page'],
+  ] as const) {
+    const n = intents.filter((e) => e.event === event && !ours(e.user_id)).length;
+    if (n === 0) continue;
+    parts.push(`${n} ${label}`);
+    meta[event] = n;
+  }
+  if (parts.length === 0) return;
+
+  await sendTelegram(env, 'user_feed', 'daily-reads', `Last 24h: ${parts.join('; ')}`, meta);
 }
 
 // ---------------------------------------------------------------------------
@@ -3779,6 +3985,13 @@ export default {
       await sentinel(env, event.scheduledTime).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[sentinel] failed:', (err as Error).message);
+      });
+      // The reads the live feed spent the day not sending, as one counted
+      // line. Its own catch: a Supabase hiccup here is not a reason the
+      // sentinel's findings go unreported.
+      await userFeedDaily(env, event.scheduledTime).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[userfeed-daily] failed:', (err as Error).message);
       });
       return;
     }
