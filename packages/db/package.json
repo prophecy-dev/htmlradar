@@ -10,7 +10,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./owner": "./src/owner.ts",
-    "./public": "./src/public.ts"
+    "./public": "./src/public.ts",
+    "./password": "./src/password.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
