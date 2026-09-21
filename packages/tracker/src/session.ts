@@ -32,20 +32,26 @@ export class Session {
 
   private activeMs = 0;
   private activeRunningSince: number | null = null;
-  // Idle watchdog at the session level. Same threshold + same events
-  // as sections-v2 (keydown / scroll / touchstart — mousemove
-  // deliberately excluded as "too noisy"). If the reader doesn't
-  // interact with the page for this long, session active_time stops
-  // accumulating even if the tab is foregrounded. Without this,
-  // "reading time" inflated when the reader left the tab open and
-  // walked away.
+  // Idle watchdog at the session level. If the reader shows no sign of
+  // presence for this long, session active_time stops accumulating even
+  // if the tab is foregrounded. Without this, "reading time" inflated
+  // when the reader left the tab open and walked away.
   private lastActivityMs: number = performance.now();
   private maxScroll = 0;
+  // Active milliseconds already handed to the section tracker. The
+  // section tracker owns no clock of its own; it spends what this one
+  // credits (see consumeActiveMs), so section totals can never exceed
+  // the session's active time.
+  private consumedMs = 0;
 
   private heartbeatTimer: number | null = null;
   private maxSessionTimer: number | null = null;
 
   private flushing = false;
+  // A flush asked for while another was in flight. The old code dropped
+  // it, which meant the LAST report — the one sent on hide, carrying the
+  // final figures — was exactly the one a slow heartbeat could lose.
+  private pendingFlush: { keepalive: boolean } | null = null;
   private dirty = false;
   private rafScrollScheduled = false;
   private boundCount = 0;
@@ -60,6 +66,7 @@ export class Session {
       selector: opts.config.sections.selector,
       boundaryOffsetPx: opts.config.sections.boundaryOffsetPx,
       minDwellMs: opts.config.sections.minDwellMs,
+      consumeActiveMs: (nowMs) => this.consumeActiveMs(nowMs),
       ...(opts.config.hooks.onSectionEnter
         ? { onSectionEnter: opts.config.hooks.onSectionEnter }
         : {}),
@@ -90,9 +97,27 @@ export class Session {
     // during the wait leaves nothing to clean up.
     if (!this.opts.preStarted) {
       if (document.hidden) return null;
-      const SESSION_DELAY_MS = 5000;
-      await new Promise<void>((resolve) => setTimeout(resolve, SESSION_DELAY_MS));
+      // Was the page visible for the WHOLE warm-up, not just at both
+      // ends? Only then are the warm-up seconds real reading seconds.
+      let hiddenDuringWarmUp = false;
+      const watchWarmUp = (): void => {
+        if (document.hidden) hiddenDuringWarmUp = true;
+      };
+      document.addEventListener('visibilitychange', watchWarmUp);
+      await new Promise<void>((resolve) => setTimeout(resolve, Session.WARM_UP_MS));
+      document.removeEventListener('visibilitychange', watchWarmUp);
       if (document.hidden) return null;
+      // Credit the warm-up back. The reader was looking at the document
+      // during those seconds; the wait exists to filter crawlers and
+      // mis-taps, not to shorten the reading time of everyone who stays.
+      // A visit that never gets this far is still recorded as nothing.
+      if (!hiddenDuringWarmUp) {
+        this.activeMs = Session.WARM_UP_MS;
+        // Not spendable by the section tracker: no section was being
+        // sampled yet, so those seconds stay unattributed.
+        this.consumedMs = Session.WARM_UP_MS;
+        this.dirty = true;
+      }
     }
 
     if (!document.hidden) {
@@ -136,7 +161,14 @@ export class Session {
   }
 
   async flush(keepalive = false): Promise<void> {
-    if (this.flushing || !this.info || !this.token) return;
+    if (!this.info || !this.token) return;
+    if (this.flushing) {
+      // Queue it instead of dropping it, and keep the keep-alive flag if
+      // either call asked for one: the queued report is re-read from the
+      // live counters when it runs, so it carries the fuller figures.
+      this.pendingFlush = { keepalive: keepalive || (this.pendingFlush?.keepalive ?? false) };
+      return;
+    }
     this.flushing = true;
     try {
       this.tickActive(performance.now());
@@ -166,9 +198,15 @@ export class Session {
       };
       const transformed = this.opts.config.hooks.beforeFlush?.(payload) ?? payload;
       if (transformed === false) return;
-      await this.transport.updateSession(transformed, keepalive);
+      // Clear the flag BEFORE the request, not after: anything credited
+      // while this one is in flight — the seconds the hide handler books,
+      // above all — must leave the session dirty so the queued report
+      // still goes out. Marking it clean afterwards silently swallowed
+      // the last update.
       this.dirty = false;
+      await this.transport.updateSession(transformed, keepalive);
     } catch (err) {
+      this.dirty = true;
       const error = err instanceof Error ? err : new Error(String(err));
       if (this.opts.config.debug) {
         // eslint-disable-next-line no-console
@@ -181,6 +219,9 @@ export class Session {
       }
     } finally {
       this.flushing = false;
+      const queued = this.pendingFlush;
+      this.pendingFlush = null;
+      if (queued) await this.flush(queued.keepalive);
     }
   }
 
@@ -215,21 +256,30 @@ export class Session {
     this.boundCount = 1;
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener('pagehide', this.onPageHide);
+    // Page-lifecycle stops. `freeze` is Chrome discarding a background
+    // tab; `pageshow` with persisted=true is the same page coming back
+    // out of the back-forward cache, where every clock we hold is stale
+    // by however long the reader was away. `beforeprint` covers the
+    // print dialog: the document is on screen but nobody is reading it.
+    document.addEventListener('freeze', this.onFreeze);
+    document.addEventListener('resume', this.onResume);
+    window.addEventListener('pageshow', this.onPageShow);
+    window.addEventListener('beforeprint', this.onFreeze);
+    window.addEventListener('afterprint', this.onResume);
     // Capture, not bubble: a scroll event on an inner scroll container does
     // not bubble, so a bubble-phase window listener never sees a document
     // that scrolls a panel instead of the page. Capture runs from the
     // window down and catches both.
     window.addEventListener('scroll', this.onScroll, { passive: true, capture: true });
-    // Activity watchdog inputs. Same events sections-v2 listens to, plus a
-    // throttled mousemove: a reader holding still on a page that does not
-    // scroll emits nothing else, and every comparable product counts
-    // ordinary mouse use as presence.
-    window.addEventListener('keydown', this.onActivity, { passive: true });
-    window.addEventListener('touchstart', this.onActivity, { passive: true });
-    window.addEventListener('mousedown', this.onActivity, { passive: true });
-    window.addEventListener('wheel', this.onActivity, { passive: true });
-    window.addEventListener('mousemove', this.onMouseMove, { passive: true });
-    // scroll already bumps activity via onScroll → onActivity below.
+    // Presence inputs. A wheel notch, a touch, a key or a click is a
+    // person; so is a throttled mousemove, for a reader holding still on
+    // a page that does not scroll. Scroll itself is NOT here — see
+    // onScroll. Capture, so input inside an inner panel counts too.
+    window.addEventListener('keydown', this.onActivity, { passive: true, capture: true });
+    window.addEventListener('touchstart', this.onActivity, { passive: true, capture: true });
+    window.addEventListener('mousedown', this.onActivity, { passive: true, capture: true });
+    window.addEventListener('wheel', this.onActivity, { passive: true, capture: true });
+    window.addEventListener('mousemove', this.onMouseMove, { passive: true, capture: true });
   }
 
   private unbindListeners(): void {
@@ -237,41 +287,78 @@ export class Session {
     this.boundCount = 0;
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.removeEventListener('pagehide', this.onPageHide);
+    document.removeEventListener('freeze', this.onFreeze);
+    document.removeEventListener('resume', this.onResume);
+    window.removeEventListener('pageshow', this.onPageShow);
+    window.removeEventListener('beforeprint', this.onFreeze);
+    window.removeEventListener('afterprint', this.onResume);
     window.removeEventListener('scroll', this.onScroll, { capture: true });
-    window.removeEventListener('keydown', this.onActivity);
-    window.removeEventListener('touchstart', this.onActivity);
-    window.removeEventListener('mousedown', this.onActivity);
-    window.removeEventListener('wheel', this.onActivity);
-    window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('keydown', this.onActivity, { capture: true });
+    window.removeEventListener('touchstart', this.onActivity, { capture: true });
+    window.removeEventListener('mousedown', this.onActivity, { capture: true });
+    window.removeEventListener('wheel', this.onActivity, { capture: true });
+    window.removeEventListener('mousemove', this.onMouseMove, { capture: true });
   }
 
   private onVisibility = (): void => {
     if (document.hidden) {
-      this.tickActive(performance.now());
-      this.activeRunningSince = null;
-      this.sections.pause();
-      void this.flush();
+      this.pauseClocks();
+      // Keep-alive: the tab may be closing rather than merely hiding,
+      // and this report is the one that carries the final figures.
+      void this.flush(true);
     } else {
-      const now = performance.now();
-      // Tab returning to focus IS an attention signal — bump the
-      // activity timestamp so the idle watchdog starts fresh from
-      // this moment. Without this, a reader who came back from a
-      // long absence would have their first few seconds skipped.
-      this.lastActivityMs = now;
-      this.activeRunningSince = now;
-      this.sections.resume();
+      this.resumeClocks();
     }
   };
 
   private onPageHide = (): void => {
-    this.tickActive(performance.now());
-    this.activeRunningSince = null;
-    this.sections.pause();
+    this.pauseClocks();
     void this.flush(true);
   };
 
+  // Frozen tab, or an open print dialog: the clocks stop, nothing is
+  // sent (a frozen page cannot complete a request anyway).
+  private onFreeze = (): void => {
+    this.pauseClocks();
+  };
+
+  private onResume = (): void => {
+    if (!document.hidden) this.resumeClocks();
+  };
+
+  // Restored from the back-forward cache. Same session, same row — we
+  // never start a second one — but every timestamp we hold predates the
+  // absence, so the clocks restart from now.
+  private onPageShow = (e: PageTransitionEvent): void => {
+    if (!e.persisted) return;
+    if (document.hidden) {
+      this.pauseClocks();
+      return;
+    }
+    this.resumeClocks();
+  };
+
+  private pauseClocks(): void {
+    this.tickActive(performance.now());
+    this.activeRunningSince = null;
+    this.sections.pause();
+  }
+
+  private resumeClocks(): void {
+    const now = performance.now();
+    // Coming back to the document IS a sign of presence — the reader
+    // chose this tab — so the allowance starts fresh from this moment.
+    this.lastActivityMs = now;
+    this.activeRunningSince = now;
+    this.sections.resume();
+  }
+
+  // Scroll is a POSITION signal only, never a sign of presence: a
+  // browser marks a script's `scrollTo` as trusted exactly like a
+  // human's, so an auto-advancing carousel would read as a reader.
+  // Real human scrolling always arrives with wheel, touchstart or
+  // keydown alongside it, and those renew the allowance.
   private onScroll = (): void => {
-    this.onActivity();
     if (this.rafScrollScheduled) return;
     this.rafScrollScheduled = true;
     requestAnimationFrame(() => {
@@ -280,29 +367,45 @@ export class Session {
     });
   };
 
-  // Bumps the activity timestamp. Called from scroll / keydown /
-  // touchstart so the idle watchdog knows the reader is engaged.
-  // Also resumes accumulation if we were idle-paused and the tab is
-  // currently visible — first interaction after going idle starts
-  // counting again immediately.
-  // mousemove fires per pixel of travel; one bump a second is all the 5s
+  // mousemove fires per pixel of travel; one bump a second is all the
   // watchdog can use, so the other few hundred are dropped before they
   // touch anything.
   private lastMoveBumpMs = 0;
-  private onMouseMove = (): void => {
+  private onMouseMove = (e: Event): void => {
     const now = performance.now();
     if (now - this.lastMoveBumpMs < 1_000) return;
     this.lastMoveBumpMs = now;
-    this.onActivity();
+    this.onActivity(e);
   };
 
-  private onActivity = (): void => {
+  // Renews the reading allowance. Only genuine human input gets here:
+  // keydown, touchstart, mousedown, wheel and throttled mousemove, and
+  // only when the browser marks the event as trusted. An event a script
+  // dispatched — an auto-advancing deck, a media player, a document that
+  // rewrites itself — is not a reader, so it renews nothing.
+  private onActivity = (e?: Event): void => {
+    if (e && e.isTrusted === false) return;
     const now = performance.now();
+    // Credit what was earned under the OLD deadline before moving it.
+    // Input that arrives after the allowance expired but before the next
+    // routine update would otherwise back-date the whole silent gap into
+    // reading time — a small error at five seconds, a large one at thirty.
+    this.tickActive(now);
     this.lastActivityMs = now;
     if (this.activeRunningSince === null && typeof document !== 'undefined' && !document.hidden) {
       this.activeRunningSince = now;
     }
   };
+
+  // Hands the section tracker the active milliseconds credited since it
+  // last asked. It has no clock of its own, so whatever it attributes to
+  // sections is a share of this number and never more than it.
+  private consumeActiveMs(nowMs: number): number {
+    this.tickActive(nowMs);
+    const unspent = this.activeMs - this.consumedMs;
+    this.consumedMs = this.activeMs;
+    return unspent;
+  }
 
   private updateMaxScroll(): void {
     const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
@@ -333,19 +436,24 @@ export class Session {
 
   // Session-level active-time accumulator with idle watchdog.
   //
-  // The reader's active_time only advances while ALL of:
-  //   - the tab is visible (handled in onVisibility — when hidden,
+  // The reader's active_time only advances while BOTH of:
+  //   - the tab is visible (handled in pauseClocks — when hidden,
   //     activeRunningSince is set to null and this method no-ops)
-  //   - they did one of keydown / scroll / touchstart in the last
-  //     IDLE_THRESHOLD_MS (handled here by capping the elapsed
-  //     window at lastActivityMs + IDLE_THRESHOLD_MS)
+  //   - they showed a sign of presence in the last IDLE_THRESHOLD_MS
+  //     (handled here by capping the elapsed window at
+  //     lastActivityMs + IDLE_THRESHOLD_MS)
   //
-  // Matches the sections-v2 watchdog semantically — both counters
-  // now agree on what "engaged time" means. Without this, sitting
-  // on a foregrounded tab while AFK inflated active_time without
-  // bound, while section dwell correctly stopped accumulating.
-  // Industry standard (IAB / Chartbeat / Parse.ly engagement-time).
-  private static readonly IDLE_THRESHOLD_MS = 5_000;
+  // Thirty seconds, not five. Five came from news-site analytics,
+  // where readers scroll constantly; people read a deck or a proposal
+  // with their hands still, and across 151 ordinary visits we recorded
+  // 36 seconds of a 152-second visit. Thirty is the allowance a silent
+  // reader gets before we stop believing they are there; a reader who
+  // walks away therefore costs us at most thirty seconds of error.
+  private static readonly IDLE_THRESHOLD_MS = 30_000;
+
+  // The bot / mis-tap warm-up at the top of start(), and the amount
+  // credited back once the session proves real.
+  private static readonly WARM_UP_MS = 5_000;
 
   private tickActive(nowMs: number): void {
     if (this.activeRunningSince === null) return;

@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatTimestamp } from '@/lib/format-timestamp';
+import { READING_TIME_LABEL } from '@/lib/reading-time';
 import type { Session, Viewer } from '@/lib/types';
 
 function formatDuration(seconds: number): string {
@@ -73,7 +74,13 @@ export function SessionsList({ sessions, viewers, variant, initialLimit = 5 }: P
               <div className="font-mono text-[11.5px] text-graphite" title={ts.full}>
                 {ts.display}
               </div>
-              <div className="font-mono text-[12.5px] font-semibold tabular-nums text-signal-dark">
+              {/* Same figure, same source, same words as every other
+                  screen: the session's active time, described as an
+                  estimate. */}
+              <div
+                className="font-mono text-[12.5px] font-semibold tabular-nums text-signal-dark"
+                title={READING_TIME_LABEL}
+              >
                 {formatDuration(s.active_time_seconds)}
               </div>
               <div className="flex items-center gap-2">

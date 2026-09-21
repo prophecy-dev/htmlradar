@@ -10,7 +10,13 @@ afterEach(() => {
 
 function discover(html: string): Array<{ id: string; title: string }> {
   document.body.innerHTML = html;
-  const tracker = new SectionTracker({ selector: '.nope', boundaryOffsetPx: 0, minDwellMs: 0 });
+  const tracker = new SectionTracker({
+    selector: '.nope',
+    boundaryOffsetPx: 0,
+    minDwellMs: 0,
+    // Discovery only: this helper never ticks the sampler.
+    consumeActiveMs: () => 0,
+  });
   tracker.start();
   // snapshot() only lists sections that have been entered; read discovery directly.
   const internal = tracker as unknown as { sections: Array<{ id: string; title: string }> };

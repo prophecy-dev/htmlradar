@@ -17,6 +17,12 @@ import { CopySlugButton } from '@/components/CopySlugButton';
 import { countDistinctViewers } from '@/lib/viewer-metrics';
 import { ADDRESS_UNAVAILABLE, domainDisconnectedNote, shareUrl } from '@/lib/share-url';
 import { SessionsList } from '@/components/SessionsList';
+import {
+  hasPreReleaseSessions,
+  READING_TIME_EXPLANATION,
+  READING_TIME_LABEL,
+  READING_TIME_METHODOLOGY_NOTE,
+} from '@/lib/reading-time';
 import type { Viewer, Session } from '@/lib/types';
 
 interface SectionRow {
@@ -125,7 +131,7 @@ export function ShareAnalytics({
           )}
         >
           <Stat
-            label="Avg tab-open"
+            label="Avg reading time"
             value={formatDuration(avgActiveSeconds)}
             pop={isPanel}
             variant={variant}
@@ -133,6 +139,19 @@ export function ShareAnalytics({
           <Stat label="Viewers" value={String(countDistinctViewers(viewers))} variant={variant} />
           <Stat label="Sessions" value={String(sessions.length)} variant={variant} />
           <Stat label="Max scroll" value={`${Math.round(maxScroll * 100)}%`} variant={variant} />
+        </div>
+      )}
+
+      {/* Said plainly, not on hover: the number is an estimate, and it is
+          the same estimate on every screen. */}
+      {!hideStatRow && (
+        <div className="-mt-4 space-y-1 text-[11.5px] leading-relaxed text-graphite">
+          <p>
+            <span className="text-ink-soft">{READING_TIME_LABEL}.</span> {READING_TIME_EXPLANATION}
+          </p>
+          {hasPreReleaseSessions(sessions.map((s) => s.started_at)) && (
+            <p>{READING_TIME_METHODOLOGY_NOTE}</p>
+          )}
         </div>
       )}
 

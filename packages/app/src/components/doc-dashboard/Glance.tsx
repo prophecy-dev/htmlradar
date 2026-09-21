@@ -5,10 +5,11 @@
 // Pure presentation — every metric value is computed by the caller and
 // passed in. Sparkline points are precomputed too (12 buckets, 24h).
 //
-// Critical: the feature value is "total active read time" — the SUM of
-// per-viewer section dwell across visible viewers. This is the honest
-// "engaged with content" total. NEVER source from session.active_time,
-// which inflates on idle-but-foregrounded mobile tabs.
+// The feature value is total estimated reading time: the sum of session
+// active time across visible viewers. It used to be the sum of per-viewer
+// section dwell, which made this card disagree with the share report about
+// the same visits. Section dwell is now the attributable part of the same
+// clock, shown in the per-viewer drill.
 
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';

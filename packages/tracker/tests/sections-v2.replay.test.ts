@@ -60,10 +60,18 @@ function simulate(
 ): SimulationResult {
   document.documentElement.innerHTML = html.replace(/<!DOCTYPE[^>]*>/i, '');
 
+  // Stands in for the session clock: a reader present throughout, so
+  // every millisecond of simulated wall time is there to be spent.
+  let lastConsumed = 1000;
   const tracker = new SectionTracker({
     selector: options.selector ?? 'h1, h2, h3',
     boundaryOffsetPx: 100,
     minDwellMs: 500,
+    consumeActiveMs: (nowMs: number) => {
+      const credited = nowMs - lastConsumed;
+      lastConsumed = nowMs;
+      return credited;
+    },
   });
 
   // Patch rAF to manual control — we'll fire ticks ourselves.

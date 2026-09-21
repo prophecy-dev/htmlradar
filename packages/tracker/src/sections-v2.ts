@@ -29,12 +29,6 @@ import type { SectionInfo } from './types.js';
 // frame regardless; we only DO work when this many ms have passed.
 const SAMPLE_INTERVAL_MS = 250;
 
-// Activity watchdog. If the user hasn't moused, touched, scrolled, or
-// pressed a key in this long, we treat the session as idle and stop
-// accumulating dwell — even if the tab is foregrounded. Mirrors Chartbeat /
-// Parse.ly engagement-time methodology.
-const ACTIVITY_IDLE_MS = 5_000;
-
 // IAB Viewable Impression Standard: a section needs half of it on screen to
 // count as "visible" — half of its own height, or half the window once the
 // section is taller than the window, whichever is the smaller measure. A
@@ -81,6 +75,12 @@ interface Options {
   selector: string;
   boundaryOffsetPx: number; // unused in v2 (kept for type-compatibility)
   minDwellMs: number;
+  // The one clock. Returns the active milliseconds the session has
+  // credited since this tracker last asked — already gated on
+  // visibility and on the reader's presence allowance. Sections spend
+  // that budget; they never measure time themselves, so their totals
+  // cannot exceed the session's active time.
+  consumeActiveMs: (nowMs: number) => number;
   onSectionEnter?: (info: SectionInfo) => void;
   onSectionRead?: (info: SectionInfo) => void;
 }
@@ -95,7 +95,6 @@ export class SectionTracker {
   private active = false;
   private rafHandle = 0;
   private lastSampleTs = 0;
-  private lastActivityTs = 0;
   private readonly enteredOnce = new Set<string>();
 
   constructor(opts: Options) {
@@ -106,10 +105,7 @@ export class SectionTracker {
     if (this.active) return;
     this.active = true;
     this.discoverSections();
-    this.bindActivityListeners();
-    const now = nowMs();
-    this.lastSampleTs = now;
-    this.lastActivityTs = now;
+    this.lastSampleTs = nowMs();
     this.scheduleTick();
   }
 
@@ -117,7 +113,6 @@ export class SectionTracker {
     if (!this.active) return;
     this.active = false;
     this.cancelTick();
-    this.unbindActivityListeners();
   }
 
   // Visibility-hidden → pause the sampler. No-op if not active. We don't
@@ -131,9 +126,7 @@ export class SectionTracker {
   resume(): void {
     if (!this.active) return;
     if (this.rafHandle) return;
-    const now = nowMs();
-    this.lastSampleTs = now;
-    this.lastActivityTs = now;
+    this.lastSampleTs = nowMs();
     for (const s of this.sections) s.continuousVisibleMs = 0;
     this.scheduleTick();
   }
@@ -176,10 +169,7 @@ export class SectionTracker {
       // Headless / non-browser env (jsdom in some configurations). Fall
       // back to setTimeout at the sample cadence so tests still drive
       // the accumulator.
-      this.rafHandle = setTimeout(
-        () => this.tick(nowMs()),
-        SAMPLE_INTERVAL_MS,
-      ) as unknown as number;
+      this.rafHandle = setTimeout(() => this.tick(), SAMPLE_INTERVAL_MS) as unknown as number;
       return;
     }
     this.rafHandle = requestAnimationFrame(this.tick);
@@ -195,32 +185,29 @@ export class SectionTracker {
     this.rafHandle = 0;
   }
 
-  private tick = (ts: number): void => {
+  // The rAF timestamp argument is deliberately ignored: this tracker and
+  // the session clock must read the same clock, and the session's is
+  // performance.now(). One clock, one set of numbers.
+  private tick = (): void => {
     if (!this.active) return;
 
-    const isActive =
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'visible' &&
-      ts - this.lastActivityTs < ACTIVITY_IDLE_MS;
-
-    // Idle (tab visible but no recent activity): advance the sample clock
-    // WITHOUT crediting. Otherwise the idle gap stays folded into `elapsed`,
-    // and the next active tick dumps the entire gap onto whatever section is
-    // on screen — inflating section dwell well past the session's active
-    // time. active_time is idle-gated (5s watchdog); section dwell must be
-    // too, or the two diverge (the "timing is off" over-credit).
-    if (!isActive) {
+    const ts = nowMs();
+    if (ts - this.lastSampleTs >= SAMPLE_INTERVAL_MS) {
       this.lastSampleTs = ts;
-      this.scheduleTick();
-      return;
-    }
-
-    const elapsed = ts - this.lastSampleTs;
-    if (elapsed >= SAMPLE_INTERVAL_MS) {
-      this.lastSampleTs = ts;
-      // Clamp to two sample intervals so a residual gap (a throttled rAF,
-      // a slow frame, a wake-from-background race) can never over-credit.
-      this.sample(Math.min(elapsed, SAMPLE_INTERVAL_MS * 2));
+      // Spend what the session credited since the last sample, and no
+      // more. Zero means the session is not crediting — hidden tab, or
+      // the reader's allowance ran out — so nothing is attributed and
+      // no section can claim a sustained view across the gap.
+      const credited = this.opts.consumeActiveMs(ts);
+      if (credited <= 0) {
+        for (const s of this.sections) s.continuousVisibleMs = 0;
+      } else {
+        // Clamp to two sample intervals so a residual gap (a throttled
+        // rAF, a slow frame, a wake-from-background race) is not dumped
+        // onto whichever section happens to be on screen. The remainder
+        // stays with the session as unattributed time.
+        this.sample(Math.min(credited, SAMPLE_INTERVAL_MS * 2));
+      }
     }
 
     this.scheduleTick();
@@ -299,33 +286,6 @@ export class SectionTracker {
         this.opts.onSectionRead?.(toInfo(section));
       }
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Activity watchdog — keystrokes / pointer / touch / scroll bump the timer.
-  // No mousemove (too noisy) or focus (doesn't imply attention).
-  // ---------------------------------------------------------------------------
-
-  private readonly onActivity = (): void => {
-    this.lastActivityTs = nowMs();
-  };
-
-  private bindActivityListeners(): void {
-    if (typeof window === 'undefined') return;
-    window.addEventListener('keydown', this.onActivity, { passive: true });
-    window.addEventListener('mousedown', this.onActivity, { passive: true });
-    window.addEventListener('touchstart', this.onActivity, { passive: true });
-    window.addEventListener('scroll', this.onActivity, { passive: true });
-    window.addEventListener('wheel', this.onActivity, { passive: true });
-  }
-
-  private unbindActivityListeners(): void {
-    if (typeof window === 'undefined') return;
-    window.removeEventListener('keydown', this.onActivity);
-    window.removeEventListener('mousedown', this.onActivity);
-    window.removeEventListener('touchstart', this.onActivity);
-    window.removeEventListener('scroll', this.onActivity);
-    window.removeEventListener('wheel', this.onActivity);
   }
 
   // ---------------------------------------------------------------------------

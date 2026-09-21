@@ -35,6 +35,12 @@ import { GlanceGrid, sparklineFromSessionStarts } from '@/components/doc-dashboa
 import { PulsingDot } from '@/components/doc-dashboard/PulsingDot';
 import { SectionHead } from '@/components/doc-dashboard/SectionHead';
 import { formatTimestamp } from '@/lib/format-timestamp';
+import {
+  hasPreReleaseSessions,
+  READING_TIME_EXPLANATION,
+  READING_TIME_LABEL,
+  READING_TIME_METHODOLOGY_NOTE,
+} from '@/lib/reading-time';
 
 interface ViewerInsightsProps {
   viewers: Viewer[];
@@ -67,15 +73,10 @@ interface ViewerGroup {
   viewerIds: string[]; // every viewer row that maps to this group (for hide action)
   primary: string; // email or "Viewer N"
   isInternal: boolean; // true iff every viewer in the group is internal
-  // Reading time = section dwell sum. This is the honest "engaged with
-  // content" number and the one we show prominently. It's bounded above
-  // by activeSeconds — you can't read more than the tab was open.
+  // Estimated reading time: the sum of the sessions' active time, which
+  // is what every other screen shows for the same visits. Section dwell
+  // is the part of it we can attribute to a section, never the total.
   totalSeconds: number;
-  // Tab-open time (sum of session.active_time_seconds). Inflates on
-  // mobile when a session stays foregrounded but the user isn't
-  // looking (no visibilitychange fires when a user app-switches on
-  // some Android/iOS versions). Shown as a secondary footnote.
-  activeSeconds: number;
   maxScroll: number; // 0..1
   visits: number;
   firstSeen: string;
@@ -206,16 +207,14 @@ function buildGroups(
   for (const [key, vList] of groupViewers.entries()) {
     const sList = groupSessions.get(key) ?? [];
     const activeSeconds = sList.reduce((acc, s) => acc + (s.active_time_seconds ?? 0), 0);
-    const sectionsMapForReadingTime = groupSections.get(key);
-    const sectionsForReadingTime = sectionsMapForReadingTime
-      ? [...sectionsMapForReadingTime.values()]
-      : [];
-    // Reading time = section dwell sum, capped by active time. If no
-    // sections were captured (older sessions pre-IO tracker, or docs
-    // without detectable structure) we fall back to active time so
-    // the cell isn't blank.
-    const dwellSum = sectionsForReadingTime.reduce((acc, s) => acc + s.totalSeconds, 0);
-    const totalSeconds = dwellSum > 0 ? Math.min(dwellSum, activeSeconds) : activeSeconds;
+    // Reading time IS the session's active time. It used to be the sum of
+    // section dwell, falling back to active time only when no section was
+    // detected at all — so one tiny detected section suppressed a long
+    // read, and the same visit showed two different numbers on two
+    // screens. Section dwell is now the attributable PART of this number,
+    // shown in the drill below, and the tracker gives sections their time
+    // out of this same clock so they can never add up to more.
+    const totalSeconds = activeSeconds;
     const maxScroll = sList.reduce((acc, s) => Math.max(acc, s.max_scroll_depth ?? 0), 0);
     const visits =
       sList.length > 0 ? sList.length : vList.reduce((acc, v) => acc + (v.visit_count ?? 1), 0);
@@ -268,7 +267,6 @@ function buildGroups(
       primary: key.startsWith('__anon_') ? anonLabelFor.get(key)! : vList[0]!.email!,
       isInternal,
       totalSeconds,
-      activeSeconds,
       maxScroll,
       visits,
       firstSeen,
@@ -345,12 +343,10 @@ export function ViewerInsights({
 
     const totalViewers = visibleGroups.length;
     const totalSessions = visibleSessions.length;
-    // CRITICAL: total + avg active times BOTH source from per-viewer
-    // section dwell (g.totalSeconds), NOT session.active_time_seconds.
-    // The latter inflates on idle-but-foregrounded mobile tabs (the
-    // idle-foreground-tab incident). Section dwell is the honest
-    // "engaged with content" number — what we surface as "Reading time"
-    // in the per-row drill.
+    // Total + average reading time source from the same per-group
+    // figure the table rows show, which is session active time. They
+    // used to source from section dwell, which made this headline
+    // disagree with the share report for the same visits.
     const totalActiveSeconds = visibleGroups.reduce((a, g) => a + g.totalSeconds, 0);
     const avgActive = totalViewers > 0 ? totalActiveSeconds / totalViewers : 0;
     // Avg seconds per SESSION (not per viewer) — surfaces as the
@@ -428,12 +424,12 @@ export function ViewerInsights({
           the 2026-05-18 redesign. Every metric still reflects
           VISIBLE viewers only (hidden viewers stay out of the headline
           numbers regardless of the table's show-hidden toggle).
-          Critical: feature value derives from section dwell SUM, NOT
-          session.active_time — see comment above on aggregates. */}
+          The feature value is the sum of session active time — the same
+          figure, from the same source, as every other screen. */}
       <div className="mt-5">
         <GlanceGrid
           feature={{
-            label: 'Total reading time',
+            label: 'Total estimated reading time',
             ...formatDurationParts(aggregates.totalActiveSeconds),
             liveReaders: aggregates.liveReaders,
             sparkline: aggregates.sparkline,
@@ -470,6 +466,15 @@ export function ViewerInsights({
             },
           ]}
         />
+        {/* Said plainly, not on hover. */}
+        <div className="mt-2.5 space-y-1 text-[11.5px] leading-relaxed text-graphite">
+          <p>
+            <span className="text-ink-soft">{READING_TIME_LABEL}.</span> {READING_TIME_EXPLANATION}
+          </p>
+          {hasPreReleaseSessions(sessions.map((s) => s.started_at)) && (
+            <p>{READING_TIME_METHODOLOGY_NOTE}</p>
+          )}
+        </div>
       </div>
 
       <div className="mt-8 overflow-hidden rounded-2xl border border-line bg-paper">
@@ -508,7 +513,7 @@ export function ViewerInsights({
           <thead>
             <tr className="border-b border-line text-left font-mono text-[10px] uppercase tracking-[0.16em] text-graphite">
               <th className="px-6 py-3.5 font-normal">Viewer</th>
-              <th className="px-4 py-3.5 text-right font-normal">Reading time</th>
+              <th className="px-4 py-3.5 text-right font-normal">{READING_TIME_LABEL}</th>
               <th className="px-4 py-3.5 font-normal">Scroll depth</th>
               <th className="hidden px-4 py-3.5 text-right font-normal md:table-cell">Visits</th>
               <th className="hidden px-4 py-3.5 text-right font-normal md:table-cell">
@@ -590,19 +595,11 @@ export function ViewerInsights({
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right font-mono tabular-nums">
+                    {/* One figure, no second one beside it. "Tab open"
+                        is not a number we collect, and showing it here
+                        as though it were invited the reader to treat the
+                        difference as meaningful. */}
                     <div>{formatDuration(g.totalSeconds)}</div>
-                    {g.activeSeconds > g.totalSeconds + 30 && (
-                      // Show "tab open" only when the gap is meaningful
-                      // (>30s). Otherwise it's noise. Larger gap = user
-                      // had the tab open without engaging — informative
-                      // signal but not the headline number.
-                      <div
-                        title="Total time the tab was open (active). Reading time above is the portion spent inside a section."
-                        className="mt-0.5 text-[10.5px] font-normal text-graphite"
-                      >
-                        tab: {formatDuration(g.activeSeconds)}
-                      </div>
-                    )}
                   </td>
                   <td className="px-4 py-4">
                     <ScrollBar pct={g.maxScroll} muted={isHidden} />

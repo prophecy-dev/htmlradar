@@ -49,19 +49,31 @@ function scrollTo(y: number): void {
 }
 
 // Advance the mock clock in sample-sized steps, firing the pending
-// requestAnimationFrame callback at each one. The synthetic scroll event
-// keeps the tracker's five-second idle watchdog satisfied, as a real reader's
-// scrolling would.
+// requestAnimationFrame callback at each one.
 function advance(ms: number): void {
   for (let elapsed = 0; elapsed < ms; elapsed += TICK_MS) {
     clock += TICK_MS;
-    window.dispatchEvent(new Event('scroll'));
     for (const frame of frames.splice(0)) frame(clock);
   }
 }
 
+// Stands in for the session clock: a reader who is present throughout,
+// so every millisecond of wall time is credited and the section tracker
+// has it to spend.
+let lastConsumed = 0;
+function fullyActive(nowMs: number): number {
+  const credited = nowMs - lastConsumed;
+  lastConsumed = nowMs;
+  return credited;
+}
+
 function tracker(): SectionTracker {
-  const t = new SectionTracker({ selector: 'h1, h2, h3', boundaryOffsetPx: 100, minDwellMs: 500 });
+  const t = new SectionTracker({
+    selector: 'h1, h2, h3',
+    boundaryOffsetPx: 100,
+    minDwellMs: 500,
+    consumeActiveMs: fullyActive,
+  });
   t.start();
   return t;
 }
@@ -95,6 +107,7 @@ function threeSections(bodyHeight: number): number[] {
 
 beforeEach(() => {
   clock = 1000;
+  lastConsumed = 1000;
   scrollY = 0;
   frames.length = 0;
   vi.stubGlobal('requestAnimationFrame', (cb: (ts: number) => void) => frames.push(cb));
@@ -364,7 +377,11 @@ describe('converted PDF decks', () => {
       place(section.querySelector('img')!, i * 1280, 1280);
     });
     place(document.querySelector('.credit')!, 4 * 1280, 24);
-    const t = new SectionTracker({ ...DEFAULTS.sections, minDwellMs: 500 });
+    const t = new SectionTracker({
+      ...DEFAULTS.sections,
+      minDwellMs: 500,
+      consumeActiveMs: fullyActive,
+    });
     t.start();
     for (let i = 0; i < 4; i++) {
       scrollTo(i * 1280 + 400); // The clipped heading has left the viewport.
@@ -440,5 +457,102 @@ describe('PDF contents reading time', () => {
     const withContents = measure(true);
     expect(withContents).toBeGreaterThan(3.5);
     expect(withContents).toBe(withoutContents);
+  });
+});
+
+// One clock (failure list item G). The section tracker no longer measures
+// time; it spends active milliseconds the session has credited. So whatever
+// the shape of the document — sections inside sections, sections sharing the
+// window, no sections at all — the section totals can never add up to more
+// than the session's own active time.
+describe('sections spend the session clock and never exceed it', () => {
+  // A session that credits real time until `budgetMs` has been handed out,
+  // then credits nothing — the reader going idle, or the tab hiding.
+  function budgeted(budgetMs: number): (nowMs: number) => number {
+    let spent = 0;
+    let last = clock;
+    return (nowMs: number) => {
+      const elapsed = nowMs - last;
+      last = nowMs;
+      const credited = Math.max(0, Math.min(elapsed, budgetMs - spent));
+      spent += credited;
+      return credited;
+    };
+  }
+
+  function budgetedTracker(budgetMs: number): SectionTracker {
+    const t = new SectionTracker({
+      selector: 'h1, h2, h3',
+      boundaryOffsetPx: 100,
+      minDwellMs: 500,
+      consumeActiveMs: budgeted(budgetMs),
+    });
+    t.start();
+    return t;
+  }
+
+  function total(t: SectionTracker): number {
+    return t.snapshot().reduce((sum, s) => sum + s.timeSeconds, 0);
+  }
+
+  it('stops crediting when the session stops crediting', () => {
+    const tops = threeSections(2000);
+    const t = budgetedTracker(10_000);
+    for (const top of tops) {
+      scrollTo(top + 1000);
+      advance(30_000); // ninety seconds of wall time, ten of reading
+    }
+    expect(total(t)).toBeLessThanOrEqual(10);
+    expect(total(t)).toBeGreaterThan(8);
+    t.stop();
+  });
+
+  it('holds for nested sections, where an h1 encloses the h2s being read', () => {
+    document.body.innerHTML = `
+      <h1 id="report">Quarterly report</h1><p id="intro">Intro.</p>
+      <h2 id="alpha">Alpha</h2><p id="alpha-body">Alpha body.</p>
+      <h2 id="beta">Beta</h2><p id="beta-body">Beta body.</p>`;
+    let top = 0;
+    for (const id of ['report', 'intro', 'alpha', 'alpha-body', 'beta', 'beta-body']) {
+      place(document.getElementById(id)!, top, 600);
+      top += 600;
+    }
+    const t = budgetedTracker(20_000);
+    scrollTo(1200);
+    advance(30_000);
+    scrollTo(2400);
+    advance(30_000);
+    expect(total(t)).toBeLessThanOrEqual(20);
+    t.stop();
+  });
+
+  it('holds for sections that share the window', () => {
+    threeSections(300);
+    const t = budgetedTracker(12_000);
+    scrollTo(0);
+    advance(60_000);
+    expect(total(t)).toBeLessThanOrEqual(12);
+    t.stop();
+  });
+
+  it('holds when a section only qualifies late', () => {
+    const tops = threeSections(2000);
+    const t = budgetedTracker(8_000);
+    // Scroll past everything first, settling only at the end.
+    scrollTo(tops[2]!);
+    advance(1_000);
+    scrollTo(tops[2]! + 1000);
+    advance(60_000);
+    expect(total(t)).toBeLessThanOrEqual(8);
+    t.stop();
+  });
+
+  it('credits nothing, and does not fail, on a document with no sections', () => {
+    document.body.innerHTML = '<div id="plain">Just some text.</div>';
+    const t = budgetedTracker(10_000);
+    scrollTo(0);
+    advance(30_000);
+    expect(t.snapshot()).toEqual([]);
+    t.stop();
   });
 });
