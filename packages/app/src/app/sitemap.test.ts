@@ -8,7 +8,9 @@ import sitemap from './sitemap';
 // their own page metadata sets `robots: { index: false }`, or (for /admin)
 // because the route is auth-gated and disallowed in robots.ts. Keep this
 // in sync with the "deliberately omitted" comments in sitemap.ts.
-const NOINDEX_ROUTES = new Set(['/sign-in', '/feedback', '/connect']);
+// /auth/confirm is the last step of an e-mail sign-in and its URL carries a
+// single-use token, so it is noindex, nofollow and must never be crawled.
+const NOINDEX_ROUTES = new Set(['/sign-in', '/feedback', '/connect', '/auth/confirm']);
 
 function pageFileToRoute(file: string): string {
   // "src/app/compare/docsend/page.tsx" -> "/compare/docsend"; "src/app/page.tsx" -> "/"

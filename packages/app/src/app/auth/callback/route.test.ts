@@ -2,16 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
 // The auth return path has two doors: a PKCE `code` from Google, and a
-// `token_hash` from an e-mail link. The second door is the fix for the
-// 4 to 16 Sep 2026 outage where every e-mail sign-in landed signed out,
-// so these tests hold that a token_hash is verified server-side, that a
-// bad one is reported as expired, and that the code door is unchanged.
+// `token_hash` from an e-mail link.
+//
+// The second door is now two steps, and the point of these tests is the
+// split. A GET carrying a token_hash must NOT verify it — mail-security
+// scanners fetch every link in a message on delivery, and on 17-18 September
+// 2026 one spent all three of a user's sign-in links seconds after they were
+// sent, leaving him six "expired" clicks. Only the POST that the button on
+// /auth/confirm submits may spend a token.
 
 const state = vi.hoisted(() => ({
   verifyCalls: [] as Array<{ type: string; token_hash: string }>,
   exchangeCalls: [] as string[],
   verifyError: null as { message: string } | null,
-  events: [] as string[],
+  events: [] as Array<{ event: string; properties?: Record<string, unknown> }>,
 }));
 
 vi.mock('@/lib/supabase-server', () => ({
@@ -52,19 +56,50 @@ vi.mock('@/lib/supabase-server', () => ({
 }));
 
 vi.mock('@/lib/events', () => ({
-  captureServerEvent: async ({ event }: { event: string }) => {
-    state.events.push(event);
+  captureServerEvent: async (opts: { event: string; properties?: Record<string, unknown> }) => {
+    state.events.push(opts);
   },
 }));
 
-import { GET } from './route';
+import { GET, POST } from './route';
 
-function get(query: string) {
-  const req = new Request(`https://htmlradar.com/auth/callback?${query}`) as unknown as NextRequest;
+function asNextRequest(req: Request) {
   // NextRequest carries a cookie store; a plain Request does not.
   Object.assign(req, { cookies: { get: () => undefined } });
-  return GET(req);
+  return req as unknown as NextRequest;
 }
+
+function get(query: string) {
+  return GET(asNextRequest(new Request(`https://htmlradar.com/auth/callback?${query}`)));
+}
+
+// A browser submitting the form on /auth/confirm sends these; the default is
+// what a real same-origin submission looks like.
+function post(fields: Record<string, string>, headers: Record<string, string | null> = {}) {
+  const body = new FormData();
+  for (const [key, value] of Object.entries(fields)) body.set(key, value);
+  const merged: Record<string, string> = {
+    origin: 'https://htmlradar.com',
+    'sec-fetch-site': 'same-origin',
+  };
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  return POST(
+    asNextRequest(
+      new Request('https://htmlradar.com/auth/callback', {
+        method: 'POST',
+        body,
+        headers: merged,
+      }),
+    ),
+  );
+}
+
+const names = () => state.events.map((e) => e.event);
+const reasonOf = (event: string) =>
+  state.events.find((e) => e.event === event)?.properties?.['reason'];
 
 beforeEach(() => {
   state.verifyCalls = [];
@@ -73,24 +108,125 @@ beforeEach(() => {
   state.events = [];
 });
 
-describe('the e-mail link door', () => {
-  it('verifies the token hash server-side and sends the person on to next', async () => {
-    const res = await get('next=%2Fconvert%3Fresume%3Dabc&token_hash=h1&type=email');
-    expect(state.verifyCalls).toEqual([{ type: 'email', token_hash: 'h1' }]);
-    expect(state.exchangeCalls).toEqual([]);
-    expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toBe('https://htmlradar.com/convert?resume=abc');
-    expect(state.events).toContain('user.signed_in');
+describe('a GET carrying an e-mail token never spends it', () => {
+  it('hands the token to /auth/confirm without calling verifyOtp', async () => {
+    const res = await get('next=%2Fdocs&token_hash=h1&type=email');
+    expect(state.verifyCalls).toEqual([]);
+    expect(state.events).toEqual([]);
+    expect(res.status).toBe(303);
+    const dest = new URL(res.headers.get('location')!);
+    expect(dest.pathname).toBe('/auth/confirm');
+    expect(dest.searchParams.get('token_hash')).toBe('h1');
+    // /docs is the default, so it isn't spelled out in the URL.
+    expect(dest.searchParams.get('next')).toBeNull();
   });
 
-  it('reports a used or expired link as expired, keeping the destination', async () => {
+  it('carries a staged-handoff destination through, validated', async () => {
+    const res = await get('next=%2Fconvert%3Fresume%3Dabc&token_hash=h1&type=email');
+    const dest = new URL(res.headers.get('location')!);
+    expect(dest.searchParams.get('next')).toBe('/convert?resume=abc');
+    expect(state.verifyCalls).toEqual([]);
+  });
+
+  it('collapses an off-site destination to /docs before handing it on', async () => {
+    const res = await get('next=%2F%2Fevil.com&token_hash=h1&type=email');
+    const dest = new URL(res.headers.get('location')!);
+    expect(dest.origin).toBe('https://htmlradar.com');
+    expect(dest.searchParams.get('next')).toBeNull();
+  });
+
+  // The tab-between-slashes escape, which every prefix check used to pass.
+  it('collapses a control character smuggled into the destination', async () => {
+    const res = await get(`next=${encodeURIComponent('/\t/evil.example')}&token_hash=h1`);
+    const dest = new URL(res.headers.get('location')!);
+    expect(dest.origin).toBe('https://htmlradar.com');
+    expect(dest.searchParams.get('next')).toBeNull();
+  });
+});
+
+// The POST spends a token and issues a session without needing a session
+// first, so SameSite cookies do not defend it: any site could auto-submit a
+// form carrying the ATTACKER's own unused token and land the victim inside
+// the attacker's account.
+describe('a POST from anywhere but our own page', () => {
+  it('is refused before verifyOtp is ever called', async () => {
+    const res = await post(
+      { token_hash: 'h1' },
+      { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+    );
+    expect(state.verifyCalls).toEqual([]);
+    expect(res.status).toBe(303);
+    const dest = new URL(res.headers.get('location')!);
+    expect(dest.pathname).toBe('/sign-in');
+    expect(dest.searchParams.get('error')).toBe('invalid');
+    expect(reasonOf('auth.callback_failed')).toBe('cross_origin');
+  });
+
+  it('is refused when Origin is absent, which is what a non-browser looks like', async () => {
+    const res = await post({ token_hash: 'h1' }, { origin: null, 'sec-fetch-site': null });
+    expect(state.verifyCalls).toEqual([]);
+    expect(reasonOf('auth.callback_failed')).toBe('cross_origin');
+    expect(new URL(res.headers.get('location')!).searchParams.get('error')).toBe('invalid');
+  });
+
+  it('is refused when Sec-Fetch-Site contradicts a same-looking Origin', async () => {
+    await post({ token_hash: 'h1' }, { 'sec-fetch-site': 'cross-site' });
+    expect(state.verifyCalls).toEqual([]);
+    expect(reasonOf('auth.callback_failed')).toBe('cross_origin');
+  });
+
+  // Older Safari omits Sec-Fetch-Site entirely. Refusing on absence would
+  // lock those people out, so Origin alone is the mandatory check.
+  it('goes through when Sec-Fetch-Site is absent but the Origin is ours', async () => {
+    await post({ token_hash: 'h1' }, { 'sec-fetch-site': null });
+    expect(state.verifyCalls).toEqual([{ type: 'email', token_hash: 'h1' }]);
+  });
+});
+
+describe('the POST from the confirmation button', () => {
+  it('verifies the token hash and sends the person on to next', async () => {
+    const res = await post({ token_hash: 'h1', next: '/convert?resume=abc' });
+    expect(state.verifyCalls).toEqual([{ type: 'email', token_hash: 'h1' }]);
+    expect(state.exchangeCalls).toEqual([]);
+    // 303, so the browser follows with a GET rather than re-POSTing.
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://htmlradar.com/convert?resume=abc');
+    expect(names()).toContain('user.signed_in');
+  });
+
+  it('defaults to /docs and refuses an off-site destination', async () => {
+    expect((await post({ token_hash: 'h1' })).headers.get('location')).toBe(
+      'https://htmlradar.com/docs',
+    );
+    expect((await post({ token_hash: 'h2', next: '//evil.com' })).headers.get('location')).toBe(
+      'https://htmlradar.com/docs',
+    );
+  });
+
+  it('sends a genuinely expired token to the recovery state, keeping the destination', async () => {
     state.verifyError = { message: 'Token has expired or is invalid' };
-    const res = await get('next=%2Fconvert&token_hash=h1&type=email');
+    const res = await post({ token_hash: 'h1', next: '/convert' });
+    // 303, so the browser reaches the recovery page with a GET. A 307 would
+    // re-POST the token and a refresh would offer to submit it again.
+    expect(res.status).toBe(303);
     const dest = new URL(res.headers.get('location')!);
     expect(dest.pathname).toBe('/sign-in');
     expect(dest.searchParams.get('error')).toBe('expired');
     expect(dest.searchParams.get('next')).toBe('/convert');
-    expect(state.events).toContain('auth.callback_failed');
+    expect(reasonOf('auth.callback_failed')).toBe('expired');
+  });
+
+  it('records a reason when the form carried no token', async () => {
+    const res = await post({ next: '/convert' });
+    expect(state.verifyCalls).toEqual([]);
+    expect(res.status).toBe(303);
+    expect(reasonOf('auth.callback_failed')).toBe('callback');
+    expect(new URL(res.headers.get('location')!).pathname).toBe('/sign-in');
+  });
+
+  it('refuses a control character in the submitted destination', async () => {
+    const res = await post({ token_hash: 'h1', next: '/\t/evil.example' });
+    expect(res.headers.get('location')).toBe('https://htmlradar.com/docs');
   });
 });
 
@@ -100,11 +236,18 @@ describe('the Google door is unchanged', () => {
     expect(state.exchangeCalls).toEqual(['c1']);
     expect(state.verifyCalls).toEqual([]);
     expect(res.headers.get('location')).toBe('https://htmlradar.com/docs');
+    expect(names()).toContain('user.signed_in');
   });
 
   it('with neither code nor token hash just goes to next', async () => {
     const res = await get('next=%2Fpricing');
     expect(res.headers.get('location')).toBe('https://htmlradar.com/pricing');
     expect(state.exchangeCalls).toEqual([]);
+  });
+
+  it('names the reason when the provider reports an error', async () => {
+    const res = await get('error_description=Email+link+is+invalid+or+has+expired');
+    expect(reasonOf('auth.callback_failed')).toBe('expired');
+    expect(new URL(res.headers.get('location')!).searchParams.get('error')).toBe('expired');
   });
 });

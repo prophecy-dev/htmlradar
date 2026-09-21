@@ -41,6 +41,33 @@ const nextConfig = {
   //             first-open email CTA, the share-by-share table, and the
   //             post-create redirect all link into. It must resolve to
   //             the real page, so it is deliberately NOT redirected.
+  // The two auth paths carry a single-use sign-in token in the URL.
+  //
+  // no-referrer: any subresource the confirmation page requests, and the
+  // HTMLRadar link in its corner, would otherwise be able to carry the
+  // token-bearing URL in a Referer header and drop an unspent token into
+  // somebody's request log.
+  //
+  // no-store: the same URL must never be served from a cache — not the
+  // browser's, not an intermediary's — because the response it produces
+  // depends on whether the token has been spent yet.
+  //
+  // Set here rather than in middleware: this applies to the /auth/confirm
+  // page and to every /auth/callback response, including its redirects, in
+  // one declaration, and it is the same routing layer the redirects below
+  // already use.
+  async headers() {
+    return [
+      {
+        source: '/auth/:path(callback|confirm)',
+        headers: [
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'Cache-Control', value: 'no-store' },
+        ],
+      },
+    ];
+  },
+
   async redirects() {
     return [
       { source: '/v2', destination: '/', permanent: true },

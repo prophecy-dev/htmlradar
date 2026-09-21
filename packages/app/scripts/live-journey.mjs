@@ -16,7 +16,8 @@
 // Runs daily from .github/workflows/live-journey.yml. Four steps:
 //
 //   sign-in     — mint a magic-link token with the Supabase admin API and walk
-//                 it through /auth/callback exactly as the e-mail link does.
+//                 it through /auth/callback and /auth/confirm exactly as a
+//                 person opening the e-mail link does, in both steps.
 //   api         — create a tracked link, fetch it on the content domain, read
 //                 its activity, then revoke it.
 //   custom-host — the same journey on the account's own domain, when it has a
@@ -54,13 +55,23 @@ export function config(source = process.env) {
 }
 
 /**
- * Step 1 — the sign-in contract.
+ * Step 1 — the sign-in contract, both halves of it.
  *
  * Mints a magic-link token through the Supabase admin API (which does NOT
- * send an e-mail) and presents it to /auth/callback the way the link in the
- * e-mail does. A pass means the callback redirected to /docs AND set a
- * Supabase session cookie. The September outage failed both halves: it
- * redirected to /docs with no cookie at all, or bounced to /sign-in.
+ * send an e-mail) and walks it the way a person opening the e-mail does.
+ *
+ * Since 21 September 2026 that is two requests, and this step checks both,
+ * because each guards a different outage:
+ *
+ *   the GET must NOT sign anyone in. A corporate mail scanner fetches every
+ *   link in a message on delivery, and while /auth/callback spent the token
+ *   on a GET it handed the session to the scanner and left the human six
+ *   "expired" clicks (drscholls.com, 17-18 September 2026). So a session
+ *   cookie on the GET is a FAILURE here, not a pass.
+ *
+ *   the POST must sign the person in. That is the old contract, and the one
+ *   the 4-16 September outage broke: it redirected to /docs with no cookie at
+ *   all, or bounced to /sign-in.
  */
 export async function signInStep(cfg) {
   const link = await fetch(`${cfg.supabaseUrl}/auth/v1/admin/generate_link`, {
@@ -80,30 +91,132 @@ export async function signInStep(cfg) {
   const token = (await link.json())?.hashed_token;
   if (!token) throw new Error('generate_link returned no hashed_token');
 
-  const callback = await fetch(
+  // Keep the query — the token lives in it, and a /auth/confirm fetched
+  // without one redirects straight back to /sign-in.
+  const locationOf = (res) => {
+    const location = res.headers.get('location') ?? '';
+    return location.startsWith('http') ? location : `${cfg.baseUrl}${location}`;
+  };
+  const pathOf = (res) => new URL(locationOf(res)).pathname;
+  // getSetCookie keeps the cookies separate; the fallback is for stubbed
+  // Headers in tests and any runtime that predates it.
+  const setCookiesOf = (res) =>
+    (res.headers.getSetCookie?.() ?? [res.headers.get('set-cookie') ?? '']).filter(Boolean);
+  // An `sb-` cookie being PRESENT proves nothing — a sign-out sets `sb-...=`
+  // with an empty value and Max-Age=0, which any substring check reads as a
+  // session. Only a non-empty value is a candidate.
+  const sessionCookies = (res) =>
+    setCookiesOf(res)
+      .map((line) => line.split(';')[0].trim())
+      .filter((pair) => pair.startsWith('sb-') && pair.slice(pair.indexOf('=') + 1).length > 0);
+
+  // Half one: exactly what a mail scanner does — open the link with a GET.
+  const scan = await fetch(
     `${cfg.baseUrl}${REDIRECT_PATH}&token_hash=${encodeURIComponent(token)}&type=email`,
     { redirect: 'manual' },
   );
-  const location = callback.headers.get('location') ?? '';
-  const destination = location.startsWith('http') ? new URL(location).pathname : location;
-  // getSetCookie keeps the cookies separate; the fallback is for stubbed
-  // Headers in tests and any runtime that predates it.
-  const cookies = (
-    callback.headers.getSetCookie?.() ?? [callback.headers.get('set-cookie') ?? '']
-  ).join(' ');
+  if (sessionCookies(scan).length) {
+    throw new Error(
+      'a GET on the e-mail link set an sb- session cookie — the link is spent before the person clicks, and a mail scanner will take it',
+    );
+  }
+  if (!pathOf(scan).startsWith('/auth/confirm')) {
+    throw new Error(
+      `the e-mail link went to ${pathOf(scan)}, not /auth/confirm — the token_hash door is broken`,
+    );
+  }
 
-  if (callback.status < 300 || callback.status > 399) {
-    throw new Error(`callback returned ${callback.status}, not a redirect`);
+  const confirmUrl = locationOf(scan);
+  const confirm = await fetch(confirmUrl, { redirect: 'manual' });
+  if (sessionCookies(confirm).length) {
+    throw new Error(
+      'a GET on /auth/confirm set an sb- session cookie — rendering the page is signing people in, which is the whole bug',
+    );
+  }
+  const page = confirm.ok ? await confirm.text() : '';
+  // Submit what the page actually renders, not what we minted. A form that
+  // carries the wrong token, or no token, has to fail here rather than pass
+  // because the script quietly supplied the right one from its own memory.
+  const form = parseForm(page);
+  if (!form) {
+    throw new Error(
+      `/auth/confirm returned ${confirm.status} without a POST form to /auth/callback — nobody can finish signing in`,
+    );
+  }
+  if (!form.fields.token_hash) {
+    throw new Error('the confirmation form carries no token_hash field — the button cannot work');
+  }
+
+  // Half two: the button, submitted the way the browser on that page would —
+  // same-origin, with the Origin header the login-CSRF check requires.
+  const callback = await fetch(new URL(form.action, confirmUrl), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: new URL(confirmUrl).origin,
+      referer: confirmUrl,
+      'sec-fetch-site': 'same-origin',
+    },
+    body: new URLSearchParams(form.fields),
+    redirect: 'manual',
+  });
+  const destination = pathOf(callback);
+
+  // 303 specifically: a 307 would make the browser re-POST to the
+  // destination, and a refresh would offer to submit the token again.
+  if (callback.status !== 303) {
+    throw new Error(`callback returned ${callback.status}, not the 303 the browser needs`);
   }
   if (!destination.startsWith('/docs')) {
     throw new Error(
       `callback redirected to ${destination || '(nowhere)'}, not /docs — the token_hash door is broken`,
     );
   }
-  if (!cookies.includes('sb-')) {
+  const session = sessionCookies(callback);
+  if (!session.length) {
     throw new Error('callback redirected to /docs but set no sb- session cookie — signed OUT');
   }
-  return `${callback.status} to ${destination}, sb- session cookie set`;
+
+  // The cookie existing is not the cookie working. Spend it on a page the
+  // middleware guards: a signed-out request to /docs is bounced to /sign-in,
+  // so a 200 here is the only proof that the session is real.
+  const guarded = await fetch(`${cfg.baseUrl}/docs`, {
+    headers: { cookie: session.join('; ') },
+    redirect: 'manual',
+  });
+  if (guarded.status !== 200) {
+    throw new Error(
+      `the session cookie did not authenticate: /docs answered ${guarded.status} to ${pathOf(guarded) || '(no redirect)'} — the cookie is set but signed OUT`,
+    );
+  }
+  return `GET spent nothing, POST 303 to ${destination}, session authenticated /docs`;
+}
+
+/**
+ * The confirmation form as rendered: its action and its hidden fields.
+ *
+ * Deliberately blunt — the page is ours and is one small form, so a regex is
+ * enough and pulls in no parser. Returns null when there is no form posting
+ * to /auth/callback, which is itself a failure worth reporting.
+ */
+export function parseForm(html) {
+  const form = /<form\b[^>]*\bmethod=["']?post["']?[^>]*>([\s\S]*?)<\/form>/i.exec(html ?? '');
+  if (!form) return null;
+  const action = /\baction=["']([^"']+)["']/i.exec(form[0])?.[1];
+  if (!action || !action.includes('/auth/callback')) return null;
+  // React escapes attribute values, so a `next` like `/docs?a=1&b=2` arrives
+  // as `&amp;`. Submitting that verbatim would send the wrong destination.
+  const unescape = (value) =>
+    value.replace(
+      /&(amp|lt|gt|quot|#39);/g,
+      (_, name) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[name],
+    );
+  const fields = {};
+  for (const input of form[1].matchAll(/<input\b[^>]*>/gi)) {
+    const name = /\bname=["']([^"']+)["']/i.exec(input[0])?.[1];
+    if (name) fields[name] = unescape(/\bvalue=["']([^"']*)["']/i.exec(input[0])?.[1] ?? '');
+  }
+  return { action, fields };
 }
 
 /**
