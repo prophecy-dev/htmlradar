@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Golden Journey Deck</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        background: #fbf1e8;
+        color: #1f1108;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 24px 20px 80px;
+      }
+      /* Each section is taller than a phone viewport so scrolling through
+         them produces the IntersectionObserver transitions the tracker
+         counts. Anything shorter and all three are on screen at once, which
+         records one long dwell instead of three. */
+      section {
+        min-height: 110vh;
+        padding: 56px 0 24px;
+        border-bottom: 1px solid #e8d9ca;
+      }
+      h1 {
+        font-size: 40px;
+        margin: 0 0 16px;
+      }
+      h2 {
+        font-size: 28px;
+        margin: 0 0 12px;
+      }
+      p {
+        font-size: 16px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Golden Journey Deck</h1>
+      <p>
+        The fixture the golden journeys upload. Three sections, three headings, nothing clever — the
+        point is that the numbers it produces are predictable enough to compare two runs of it.
+      </p>
+
+      <section>
+        <h2>What this deck is for</h2>
+        <p>
+          A recipient opens this deck, passes the email gate and reads each section for a few
+          seconds. Everything the product then records — the session, the section dwell, the
+          notification, the events — is what the parity record captures.
+        </p>
+      </section>
+
+      <section>
+        <h2>Why three sections</h2>
+        <p>
+          Three is the smallest number that proves the tracker distinguishes sections at all rather
+          than crediting one block for the whole visit. More sections would only make the run longer
+          without proving anything the third one does not.
+        </p>
+      </section>
+
+      <section>
+        <h2>What a failure here means</h2>
+        <p>
+          If this deck stops producing three section rows, or the dwell stops landing near the time
+          the journey actually spent, something in the recipient path changed. The design overhaul
+          is not supposed to touch that path at all.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

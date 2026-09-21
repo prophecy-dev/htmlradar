@@ -59,6 +59,31 @@ export default defineConfig({
       // userAgent + hasTouch flag are still mobile.
       name: 'mobile-chromium',
       use: { ...devices['Pixel 7'] },
+      // The golden journeys are their own project below, with their own
+      // timeout. Without this, `pnpm test:e2e` would run them twice.
+      testIgnore: /journeys\//,
+    },
+    {
+      // The golden journeys (e2e/journeys) — the before-and-after safety net
+      // for the design overhaul. See e2e/journeys/README.md.
+      //
+      // Desktop rather than the mobile profile above: what these journeys
+      // guard is the SENDER's screens, which is where the overhaul happens
+      // and which almost nobody uses on a phone. The recipient's side is
+      // already covered on mobile by smoke.spec.ts.
+      //
+      // Their own timeout because a journey is a whole afternoon compressed:
+      // a sign-in, an upload, three sections read at four seconds each and
+      // a flush do not fit in the 60 seconds a smoke check needs.
+      name: 'golden',
+      // Its own testDir rather than a testMatch. A project-level testMatch
+      // did not narrow this project on Playwright 1.56 — the golden run
+      // collected auth-setup.spec.ts and smoke.spec.ts as well, so a
+      // "golden" parity run was quietly carrying three tests that are not
+      // journeys. A testDir cannot be misread that way.
+      testDir: './e2e/journeys',
+      timeout: 300_000,
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });

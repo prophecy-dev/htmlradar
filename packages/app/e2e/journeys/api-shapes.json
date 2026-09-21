@@ -1,0 +1,25 @@
+{
+  "POST /api/v1/shares": {
+    "dashboard_url": "string",
+    "document_id": "string",
+    "share_id": "string",
+    "url": "string"
+  },
+  "GET /api/v1/shares/{id}/activity": {
+    "opened": "boolean",
+    "share_id": "string",
+    "url": "string",
+    "viewers": []
+  },
+  "POST /api/v1/documents/{id}/replace": {
+    "document_id": "string",
+    "links_unchanged": "boolean",
+    "version": "number"
+  },
+  "POST /api/v1/shares/{id}/revoke": {
+    "revoked": "boolean",
+    "revoked_at": "string",
+    "share_id": "string",
+    "url": "string"
+  }
+}
