@@ -128,6 +128,19 @@ export function stubNetwork(exchange?: () => Response): NetworkStub {
         free_links_cap: null,
       });
     }
+    if (url === 'https://htmlradar.com/api/v1/documents') {
+      return Response.json({
+        documents: [
+          {
+            document_id: 'doc-1',
+            title: 'Q3 proposal',
+            created_at: '2026-08-30T10:00:00Z',
+            share_count: 2,
+          },
+        ],
+        next_before: null,
+      });
+    }
     if (url === 'https://htmlradar.com/api/v1/shares') {
       return Response.json({
         share_id: 'share-1',

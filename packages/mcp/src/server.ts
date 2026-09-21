@@ -1,4 +1,4 @@
-// The seven HTMLRadar tools, and the MCP server that exposes them.
+// The eight HTMLRadar tools, and the MCP server that exposes them.
 //
 // Handlers are exported separately from `createServer` so the tests can call
 // them with a mocked `fetch` and no transport.
@@ -10,6 +10,7 @@ import {
   type ActivityResponse,
   type ActivityViewer,
   type Config,
+  type DocumentListResponse,
   type MeResponse,
   type ReplaceResponse,
   type RevokeResponse,
@@ -45,7 +46,16 @@ const linkOptionsShape = {
   allowed_email_domains: z
     .array(z.string())
     .optional()
-    .describe('Only these email domains may open the link, e.g. ["acme.com"].'),
+    .describe('Only these email domains may open the link, e.g. ["acme.com"]. Up to 500.'),
+  allowed_emails: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Only these exact addresses may open the link, e.g. ["ravi@acme.com"]. A separate list ' +
+        'from the domains, and a visitor passes on either. Up to 500 addresses; past that a ' +
+        'domain is the right tool. Needs the email gate, which is on by default; with it off ' +
+        'the call is refused.',
+    ),
   expires_in_hours: z
     .number()
     .int()
@@ -95,6 +105,7 @@ const OPTIONAL_LINK_FIELDS = [
   'password',
   'lock_deck',
   'allowed_email_domains',
+  'allowed_emails',
   'expires_in_hours',
   'slug',
 ] as const;
@@ -193,6 +204,30 @@ export async function listShares(
   const result = await apiFetch<ShareListResponse>(config, path, { signal });
   if (!result.ok) return failure(result.message);
   return text(formatShareList(result.data));
+}
+
+/**
+ * The account's documents.
+ *
+ * The other half of list_shares, and the half that makes "a link to last
+ * month's proposal for these five people" work in one go: a document that has
+ * never been sent has no link, so it appears nowhere in list_shares and an
+ * assistant could not name it. Identifiers and titles only — the contents of a
+ * customer's document are never read back through a tool.
+ */
+export async function listDocuments(
+  config: Config,
+  args: { before?: string | undefined },
+  signal?: AbortSignal,
+): Promise<CallToolResult> {
+  const before = args.before?.trim();
+  const path = before
+    ? `/api/v1/documents?before=${encodeURIComponent(before)}`
+    : '/api/v1/documents';
+
+  const result = await apiFetch<DocumentListResponse>(config, path, { signal });
+  if (!result.ok) return failure(result.message);
+  return text(formatDocumentList(result.data));
 }
 
 /**
@@ -414,6 +449,47 @@ export function formatShareList(list: ShareListResponse): string {
   return lines.join('\n');
 }
 
+/**
+ * The account's documents, one block each.
+ *
+ * Same discipline as formatShareList: it carries the argument the other tools
+ * take — the document id — plus enough for a person to recognise which
+ * document it is, and nothing else. Titles are customer-written, so the
+ * untrusted notice sits above them.
+ */
+export function formatDocumentList(list: DocumentListResponse): string {
+  if (!list.documents || list.documents.length === 0) {
+    return 'No documents on this account yet. share_html publishes one.';
+  }
+
+  const count = list.documents.length;
+  const lines = [
+    `${count} ${count === 1 ? 'document' : 'documents'}, newest first:`,
+    '',
+    UNTRUSTED_NOTICE,
+  ];
+
+  for (const document of list.documents) {
+    const links =
+      document.share_count === 0
+        ? 'no links yet'
+        : `${document.share_count} ${document.share_count === 1 ? 'link' : 'links'}`;
+    lines.push(
+      '',
+      `${document.title} · ${links} · created ${document.created_at}`,
+      `  document ${document.document_id}`,
+    );
+  }
+
+  if (list.next_before) {
+    lines.push(
+      '',
+      `More documents exist. Call list_documents again with before: "${list.next_before}" for the next page.`,
+    );
+  }
+  return lines.join('\n');
+}
+
 // No account identifier: `user_id` is an internal database key the model can
 // do nothing with, and the email address would be personal data it does not
 // need either. The plan and the budget are the whole answer to "which account
@@ -475,7 +551,7 @@ function failure(message: string): CallToolResult {
 
 export function createServer(config: Config): McpServer {
   const server = new McpServer(
-    { name: 'htmlradar', version: '0.3.1' },
+    { name: 'htmlradar', version: '0.4.0' },
     {
       // The one consent sentence lives here and nowhere else. It is a routing
       // hint the client may or may not act on, not a security control: the
@@ -488,11 +564,13 @@ export function createServer(config: Config): McpServer {
         'produced an HTML deck, proposal or report that the user intends to send to someone ' +
         'else, and get_share_activity when they ask whether it was read. When the user refers ' +
         'to something they sent earlier, call list_shares first to find its identifiers rather ' +
-        'than asking them to look one up. create_share makes another link for a document that ' +
-        'already exists, which is what "send this to these five people" needs; ' +
-        'replace_document puts new contents behind links that have already been sent; and ' +
-        'revoke_share switches a link off. Ask the user before publishing, replacing or ' +
-        'revoking anything.',
+        'than asking them to look one up, and list_documents when what they mean has no link ' +
+        'yet. create_share makes another link for a document that already exists, which is what ' +
+        '"send this to these five people" needs; replace_document puts new contents behind ' +
+        'links that have already been sent; and revoke_share switches a link off. On a free ' +
+        'account, publishing spends one of a small number of tracked links — whoami says how ' +
+        'many are left. If a publish is refused for that reason, say so and do not retry. Ask ' +
+        'the user before publishing, replacing or revoking anything.',
     },
   );
 
@@ -507,7 +585,9 @@ export function createServer(config: Config): McpServer {
         'never the tracking. The markup goes in `html`; there is no file-path argument, so a ' +
         'document on disk reaches this tool only as markup the caller has already read, which ' +
         "leaves the user's permissions on their own file tools in charge of what is published. " +
-        'The link is live the moment it is returned.',
+        'By default the recipient is asked for their email address before the document opens, ' +
+        'which is a step the person receiving the link has to take. The link is live the moment ' +
+        'it is returned.',
       inputSchema: shareHtmlShape,
       annotations: {
         title: 'Share HTML as a tracked link',
@@ -551,8 +631,9 @@ export function createServer(config: Config): McpServer {
         "Lists the account's tracked links, newest first: the slug, the recipient label, the " +
         'document title, whether it has been opened and when, and the share and document ids ' +
         'the other tools take. This is where the identifiers for a link made in an earlier ' +
-        'conversation come from. Returns at most 50 per call; the `before` cursor pages back ' +
-        'through older links.',
+        'conversation come from. The `opened` and `last_open` fields answer "which of my links ' +
+        'has nobody opened" on their own, without a get_share_activity report for each one. ' +
+        'Returns at most 50 per call; the `before` cursor pages back through older links.',
       inputSchema: {
         before: z
           .string()
@@ -570,6 +651,35 @@ export function createServer(config: Config): McpServer {
       },
     },
     (args, ctx) => listShares(config, args, ctx.mcpReq.signal),
+  );
+
+  server.registerTool(
+    'list_documents',
+    {
+      title: 'List documents on this account',
+      description:
+        "Lists the account's documents, newest first: the title, when it was created, how many " +
+        'tracked links point at it, and the document id that create_share and replace_document ' +
+        'take. A document with no links appears here and nowhere else, because list_shares only ' +
+        'knows documents that have been sent. It returns no document contents. Returns at most ' +
+        '50 per call; the `before` cursor pages back through older documents.',
+      inputSchema: {
+        before: z
+          .string()
+          .optional()
+          .describe(
+            'Cursor for the next page: the `next_before` value printed at the end of a previous ' +
+              'list_documents result, of the form <created_at>|<document id>. Pass it back ' +
+              'exactly as printed. Omit for the most recent documents.',
+          ),
+      },
+      annotations: {
+        title: 'List documents on this account',
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+    },
+    (args, ctx) => listDocuments(config, args, ctx.mcpReq.signal),
   );
 
   server.registerTool(
@@ -616,7 +726,10 @@ export function createServer(config: Config): McpServer {
         'sees that it is no longer available, and the sender is emailed that somebody tried. ' +
         'This changes what a recipient can see. It is reversible — `revoked: false` switches ' +
         'the link back on — and it deletes nothing: the link, its settings and its whole ' +
-        'reading history survive. Deleting a link is possible only on the website.',
+        'reading history survive. Deleting a link is possible only on the website. A link’s ' +
+        'settings cannot be changed after it is made, and switching one off to create a ' +
+        'replacement carrying different settings leaves the recipient holding a dead address, ' +
+        'so that is a swap the user agrees to explicitly rather than a way to edit a setting.',
       inputSchema: {
         share_id: z
           .string()

@@ -32,6 +32,7 @@ interface JsonRpcResponse {
 const TOOL_NAMES = [
   'create_share',
   'get_share_activity',
+  'list_documents',
   'list_shares',
   'replace_document',
   'revoke_share',
@@ -129,17 +130,18 @@ describe('the built server, launched as a client launches it', () => {
     ],
     ['with a key that is not a key', { HTMLRADAR_API_KEY: 'nonsense' }, /does not look like/],
   ])(
-    'stays alive %s, lists seven tools, and answers with the next step',
+    'stays alive %s, lists eight tools, and answers with the next step',
     async (_name, env, expected) => {
       const { init, list, server: live } = await handshake(env);
 
       expect(init.result.serverInfo?.name).toBe('htmlradar');
       expect((list.result.tools ?? []).map((tool) => tool.name).sort()).toEqual(TOOL_NAMES);
 
-      // Every one of the seven, over the wire, with arguments the schema accepts.
+      // Every one of the eight, over the wire, with arguments the schema accepts.
       const calls: [string, Record<string, unknown>][] = [
         ['whoami', {}],
         ['list_shares', {}],
+        ['list_documents', {}],
         ['get_share_activity', { share_id: 'shr_1' }],
         ['share_html', { html: '<p>hello</p>' }],
         ['create_share', { document_id: 'doc_1' }],
@@ -166,7 +168,7 @@ describe('the built server, launched as a client launches it', () => {
   it('handshakes normally with a well-formed key and prints nothing to stderr', async () => {
     const { init, list, server: live } = await handshake({ HTMLRADAR_API_KEY: WELL_FORMED_KEY });
     expect(init.result.serverInfo?.version).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(list.result.tools).toHaveLength(7);
+    expect(list.result.tools).toHaveLength(8);
     expect(live.stderr).toBe('');
     expect(live.running).toBe(true);
   }, 30_000);

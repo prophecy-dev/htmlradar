@@ -64,6 +64,26 @@ const SITE_URL = 'https://htmlradar.com';
 const ROUTE = '/api/v1/shares';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// The same shape the share form checks an address against (EMAIL_REGEX in
+// src/app/(app)/docs/[id]/DocumentShareManager.tsx) and the same one the proxy
+// checks a recipient's typed address against. Deliberately not a parser: the
+// gate compares the stored string to what the visitor typed, so this is a typo
+// check, and a stricter one here would refuse addresses the gate would accept.
+const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The longest allow-list either column will hold, counted after normalising
+// and de-duplicating.
+//
+// The website's share form has no cap and this is a known difference, taken
+// deliberately: a form is typed by a person, whereas one API request may carry
+// a 5.5 MB array and write a few hundred thousand addresses onto a single
+// share row. The proxy reads that row and scans the list on every open of the
+// link, so an unbounded list is one caller making every reader's gate slow —
+// an obvious abuse path that a browser form does not offer. Five hundred named
+// recipients is far past any real send; beyond it the honest answer is a
+// domain.
+const MAX_ALLOWLIST_ENTRIES = 500;
+
 // The largest document the API will store. Deliberately far below the 30 MB
 // the browser upload accepts: a worker has 128 MB of memory and Cloudflare
 // will hand it a body of up to 100 MB, so the API's ceiling is set by what an
@@ -94,6 +114,7 @@ interface CreateShareBody {
   lock_deck?: unknown;
   password?: unknown;
   allowed_email_domains?: unknown;
+  allowed_emails?: unknown;
   expires_in_hours?: unknown;
   slug?: unknown;
   // Which hostname the link is served from (schema/052). Absent means the
@@ -271,7 +292,74 @@ export async function POST(req: NextRequest) {
     const list = (body.allowed_email_domains as string[])
       .map((d) => d.trim().toLowerCase())
       .filter(Boolean);
+    if (list.length > MAX_ALLOWLIST_ENTRIES) {
+      return errorResponse(
+        validationError(
+          `"allowed_email_domains" has ${list.length} domains; the limit is ` +
+            `${MAX_ALLOWLIST_ENTRIES}. The gate scans this list on every open of the link.`,
+        ),
+      );
+    }
     domains = list.length > 0 ? list : null;
+  }
+
+  // Named individuals, the sibling of the domain list above and a separate
+  // field here exactly as it is a separate textarea on the website. The
+  // normalising is the form's own (parseAllowlists in
+  // src/app/(app)/docs/[id]/actions.ts): trimmed, lower-cased, blanks dropped,
+  // and an empty list stored as NULL rather than an empty array, which is what
+  // "no restriction" has always meant in this column.
+  //
+  // Three deliberate differences from the form. It refuses an address that is
+  // not one, because a typo the customer can see on their own screen is a typo
+  // an assistant cannot; it collapses duplicates, which the gate's membership
+  // test cannot tell apart anyway; and it caps the list at
+  // MAX_ALLOWLIST_ENTRIES, for the machine-surface reason given there.
+  let emails: string[] | null = null;
+  if (body.allowed_emails !== undefined && body.allowed_emails !== null) {
+    if (
+      !Array.isArray(body.allowed_emails) ||
+      body.allowed_emails.some((e) => typeof e !== 'string')
+    ) {
+      return errorResponse(validationError('"allowed_emails" must be an array of strings.'));
+    }
+    const list = (body.allowed_emails as string[])
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const bad = list.find((e) => !EMAIL_ADDRESS.test(e));
+    if (bad !== undefined) {
+      return errorResponse(
+        validationError(`Not a valid email address in "allowed_emails": ${bad}`),
+      );
+    }
+    // Counted after de-duplicating, so a list that repeats itself is judged on
+    // the addresses it actually names.
+    const unique = [...new Set(list)];
+    if (unique.length > MAX_ALLOWLIST_ENTRIES) {
+      return errorResponse(
+        validationError(
+          `"allowed_emails" names ${unique.length} addresses; the limit is ` +
+            `${MAX_ALLOWLIST_ENTRIES}. If they are all at one company, use ` +
+            '"allowed_email_domains" instead of listing everybody.',
+        ),
+      );
+    }
+    emails = unique.length > 0 ? unique : null;
+  }
+
+  // The list is only ever consulted behind the email gate: the proxy checks it
+  // inside `if (share.require_email)`, so with the gate off nobody is asked for
+  // an address and anyone holding the link opens it. The website cannot produce
+  // that combination — the two allow-list fields only exist while the gate is
+  // on — so this refuses rather than creating a link that reads as restricted
+  // and is not.
+  if (emails !== null && !requireEmail) {
+    return errorResponse(
+      validationError(
+        '"allowed_emails" needs "require_email": true. With the email gate off nobody is asked ' +
+          'for an address, so the list cannot be checked and anyone with the link would open it.',
+      ),
+    );
   }
 
   let expiresAt: string | null = null;
@@ -384,7 +472,7 @@ export async function POST(req: NextRequest) {
     p_require_password: password !== null,
     p_password_plain: password,
     p_allowed_email_domains: domains,
-    p_allowed_emails: null,
+    p_allowed_emails: emails,
     p_expires_at: expiresAt,
     p_slug: slug,
     ...shareHostArgs(hostChoice),
@@ -481,7 +569,7 @@ export async function POST(req: NextRequest) {
       require_email: requireEmail,
       require_password: password !== null,
       has_domain_allowlist: !!domains,
-      has_email_allowlist: false,
+      has_email_allowlist: !!emails,
       has_expiry: !!expiresAt,
       lock_deck: lockDeck,
       is_first_share: quota.used === 0,

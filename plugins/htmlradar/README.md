@@ -21,8 +21,9 @@ Open Settings, then Connectors, then **Add custom connector**, and paste
 
 ## What you get
 
-- The seven HTMLRadar MCP tools: `share_html` publishes HTML as a tracked link, `create_share`
+- The eight HTMLRadar MCP tools: `share_html` publishes HTML as a tracked link, `create_share`
   makes another link for a document that already exists, `list_shares` lists what you have sent,
+  `list_documents` lists the documents themselves, including ones you have never sent,
   `get_share_activity` reports who read it, `revoke_share` switches a link off, `replace_document`
   puts new contents behind links already sent, and `whoami` reports the plan and how many free
   tracked links are left.
@@ -30,7 +31,7 @@ Open Settings, then Connectors, then **Add custom connector**, and paste
 
 ## How it runs
 
-`.mcp.json` launches the published package with `npx -y htmlradar-mcp@0.3.1` and passes
+`.mcp.json` launches the published package with `npx -y htmlradar-mcp@0.4.0` and passes
 `HTMLRADAR_API_KEY` through from your environment. Nothing is bundled into the plugin, so a plugin
 update and a server update are separate things: bump the pinned version here when you want the
 newer server.

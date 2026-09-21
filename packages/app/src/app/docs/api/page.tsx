@@ -33,7 +33,13 @@ const SHARE_FIELDS: [string, string, string, string][] = [
   ['require_email', 'boolean', 'true', 'Ask for an email before the document opens.'],
   ['password', 'string', 'none', 'Extra gate on top of the email gate. At least 8 characters.'],
   ['lock_deck', 'boolean', 'true', 'Blocks save and print and adds a watermark.'],
-  ['allowed_email_domains', 'string[]', 'none', 'Only these domains may open it.'],
+  ['allowed_email_domains', 'string[]', 'none', 'Only these domains may open it. Up to 500.'],
+  [
+    'allowed_emails',
+    'string[]',
+    'none',
+    'Only these exact addresses may open it — the same separate list the share form keeps beside the domains. Trimmed and lower-cased, duplicates collapse, an empty list means no restriction, and up to 500 addresses once de-duplicated, because the gate scans the list on every open. A visitor passes if they match the domains OR this list. Requires require_email: true, or the call returns a 422; an address that is not an address, or a list over the limit, returns a 422 too.',
+  ],
   ['expires_in_hours', 'number', 'never', 'Positive number. The link stops working after it.'],
   ['slug', 'string', 'generated', 'Custom link name. Paid plans.'],
   [
@@ -383,7 +389,7 @@ export default function ApiDocsPage() {
               <Link href="/mcp" className="text-signal-dark hover:underline">
                 HTMLRadar MCP server
               </Link>{' '}
-              calls, wrapped as seven tools an agent asks for in words —{' '}
+              calls, wrapped as eight tools an agent asks for in words —{' '}
               <span className="font-mono text-[13px]">share_html</span> is{' '}
               <span className="font-mono text-[13px]">POST /api/v1/shares</span>,{' '}
               <span className="font-mono text-[13px]">get_share_activity</span> is the activity

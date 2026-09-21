@@ -2,7 +2,7 @@
   "name": "@htmlradar/connector",
   "version": "0.1.0",
   "private": true,
-  "description": "Cloudflare Worker that serves the remote MCP connector at mcp.htmlradar.com — OAuth, consent hand-off, and the seven tools.",
+  "description": "Cloudflare Worker that serves the remote MCP connector at mcp.htmlradar.com — OAuth, consent hand-off, and the eight tools.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {

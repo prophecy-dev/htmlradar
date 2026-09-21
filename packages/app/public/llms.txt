@@ -92,7 +92,7 @@ Codex:
     codex mcp add htmlradar --env HTMLRADAR_API_KEY=$HTMLRADAR_API_KEY -- npx -y htmlradar-mcp
 
 Any other MCP client runs `npx -y htmlradar-mcp` with the same environment
-variable. Seven tools, one environment variable, no telemetry.
+variable. Eight tools, one environment variable, no telemetry.
 
 ## Key pages
 

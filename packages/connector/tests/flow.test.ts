@@ -1,5 +1,5 @@
 // A whole connection, from the address a user pastes to a tool result: the
-// authorization hand-off, the consent answer, the token exchange, and the seven
+// authorization hand-off, the consent answer, the token exchange, and the eight
 // tools answering with the key that consent minted.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -87,7 +87,7 @@ describe('the exchange', () => {
 });
 
 describe('the tools', () => {
-  it('completes a handshake, lists seven tools, and calls one with the granted key', async () => {
+  it('completes a handshake, lists eight tools, and calls one with the granted key', async () => {
     const env = makeEnv();
     const { accessToken } = await completeGrant(env);
 
@@ -112,6 +112,7 @@ describe('the tools', () => {
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       'create_share',
       'get_share_activity',
+      'list_documents',
       'list_shares',
       'replace_document',
       'revoke_share',
@@ -136,7 +137,7 @@ describe('the tools', () => {
 });
 
 describe('a read-only grant', () => {
-  it('still sees all seven tools', async () => {
+  it('still sees all eight tools', async () => {
     const env = makeEnv();
     network.exchange = () =>
       Response.json({
@@ -149,7 +150,7 @@ describe('a read-only grant', () => {
 
     const listed = await rpc(env, accessToken, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     const tools = (await readRpc(listed))['result'] as { tools: { name: string }[] };
-    expect(tools.tools).toHaveLength(7);
+    expect(tools.tools).toHaveLength(8);
   });
 
   it('gets a 403 with the step-up challenge when it calls a write tool', async () => {
@@ -199,6 +200,90 @@ describe('a read-only grant', () => {
       params: { name: 'whoami', arguments: {} },
     });
     expect(called.status).toBe(200);
+  });
+});
+
+// list_documents is the eighth tool and the first one added since the scope
+// split, so which side of it the Worker puts it on is worth pinning rather
+// than inferring from WRITE_TOOLS not naming it. It reads, so a read-only
+// connection may call it, and a write-only connection may not.
+describe('the document listing against the two scopes', () => {
+  const readOnly = () =>
+    Response.json({
+      user_id: 'user-1',
+      api_key: CONNECTOR_API_KEY,
+      api_key_id: 'key-row-1',
+      scope: 'shares:read',
+    });
+
+  it('is allowed on a read-only grant, and reaches the read-only route', async () => {
+    const env = makeEnv();
+    network.exchange = readOnly;
+    const { accessToken } = await completeGrant(env, { requested: 'shares:read' });
+
+    const called = await rpc(env, accessToken, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'list_documents', arguments: {} },
+    });
+    expect(called.status).toBe(200);
+    const result = (await readRpc(called))['result'] as { content: { text: string }[] };
+    expect(result.content[0]?.text).toContain('document doc-1');
+
+    const apiCall = network.calls.find((entry) =>
+      entry.url.startsWith('https://htmlradar.com/api/v1/documents'),
+    );
+    expect(apiCall?.body).toBeUndefined();
+  });
+
+  it('may not be used by a write-only grant', async () => {
+    const env = makeEnv();
+    network.exchange = () =>
+      Response.json({
+        user_id: 'user-1',
+        api_key: CONNECTOR_API_KEY,
+        api_key_id: 'key-row-1',
+        scope: 'shares:write',
+      });
+    const { accessToken } = await completeGrant(env, { requested: 'shares:write' });
+
+    const called = await rpc(env, accessToken, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'list_documents', arguments: {} },
+    });
+    expect(called.status).toBe(403);
+    expect(network.calls.some((entry) => entry.url.includes('/api/v1/documents'))).toBe(false);
+  });
+
+  // The new publishing field is still a publish. A read-only grant carries a
+  // full API key, so the scope check is the only thing between it and a link,
+  // and adding an argument to a write tool must not move it to the read side.
+  it('does not let the named-people field smuggle a publish through a read-only grant', async () => {
+    const env = makeEnv();
+    network.exchange = readOnly;
+    const { accessToken } = await completeGrant(env, { requested: 'shares:read' });
+
+    for (const call of [
+      { name: 'share_html', arguments: { html: '<p>x</p>', allowed_emails: ['ravi@acme.com'] } },
+      {
+        name: 'create_share',
+        arguments: { document_id: 'doc-1', allowed_emails: ['ravi@acme.com'] },
+      },
+    ]) {
+      const refused = await rpc(env, accessToken, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: call,
+      });
+      expect(refused.status, call.name).toBe(403);
+      const challenge = refused.headers.get('www-authenticate') ?? '';
+      expect(challenge, call.name).toContain('error="insufficient_scope"');
+    }
+    expect(network.calls.some((entry) => entry.url.endsWith('/api/v1/shares'))).toBe(false);
   });
 });
 
@@ -255,13 +340,13 @@ describe('a write-only grant', () => {
     expect(network.calls.some((entry) => entry.url.endsWith('/api/v1/me'))).toBe(false);
   });
 
-  it('still sees all seven tools', async () => {
+  it('still sees all eight tools', async () => {
     const env = makeEnv();
     network.exchange = writeOnly;
     const { accessToken } = await completeGrant(env, { requested: 'shares:write' });
     const listed = await rpc(env, accessToken, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     const tools = (await readRpc(listed))['result'] as { tools: { name: string }[] };
-    expect(tools.tools).toHaveLength(7);
+    expect(tools.tools).toHaveLength(8);
   });
 });
 

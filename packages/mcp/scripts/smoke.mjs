@@ -60,6 +60,6 @@ for (const tool of list.result.tools) {
   );
 }
 if (list.result.tools.length !== 7) {
-  console.error(`expected 7 tools, got ${list.result.tools.length}`);
+  console.error(`expected 8 tools, got ${list.result.tools.length}`);
   process.exit(1);
 }

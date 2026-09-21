@@ -261,10 +261,10 @@ installs the server with a placeholder key, which you then replace with your own
 codex mcp add htmlradar --env HTMLRADAR_API_KEY=$HTMLRADAR_API_KEY -- npx -y htmlradar-mcp
 ```
 
-Seven tools: `whoami`, `list_shares` and `get_share_activity` read; `share_html`, `create_share`,
-`replace_document` and `revoke_share` write. Every option, the self-hosting variable and the privacy
-notes are in [`packages/mcp/README.md`](./packages/mcp/README.md). The connector at
-`mcp.htmlradar.com` serves the same seven, imported from this package rather than copied — see
+Eight tools: `whoami`, `list_shares`, `list_documents` and `get_share_activity` read; `share_html`,
+`create_share`, `replace_document` and `revoke_share` write. Every option, the self-hosting variable
+and the privacy notes are in [`packages/mcp/README.md`](./packages/mcp/README.md). The connector at
+`mcp.htmlradar.com` serves the same eight, imported from this package rather than copied — see
 [`packages/connector/README.md`](./packages/connector/README.md).
 
 If you modify the source and run a network service from it, AGPL-3.0 requires you to make your modifications available. See [`LICENSE`](./LICENSE).

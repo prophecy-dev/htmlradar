@@ -3,6 +3,32 @@
 All notable changes to `htmlradar-mcp`. The plugin at `plugins/htmlradar` pins one of these versions
 in its `.mcp.json`; direct installs (`npx -y htmlradar-mcp`) always run the latest.
 
+## 0.4.0 — 2026-09-21
+
+An eighth tool and one new setting. Nothing existing changes shape: a call that does not use them
+behaves exactly as it did in 0.3.1.
+
+- **`list_documents`** lists the account's documents, newest first, with the title, the creation
+  date, how many tracked links point at each one, and the document id `create_share` and
+  `replace_document` take. A document nobody has been sent has no link and so appears in no other
+  tool; until now an assistant could only reach a document it had published in the same
+  conversation. It returns no document contents, and a read-only connection may call it.
+- **`allowed_emails`** on `share_html` and `create_share` restricts a link to named individuals at
+  the moment it is made, a separate list from `allowed_email_domains` exactly as it is a separate
+  field on the website, and a visitor passes on either. Addresses are trimmed, lower-cased and
+  de-duplicated, up to five hundred of them; one that is not an address, or a list over the limit,
+  is refused with a 422 the tool relays. The limit is the API's alone — the website's share form
+  caps nothing — because the gate scans the stored list on every open of the link. It needs the
+  email gate, which is on by default — with the gate off nobody is asked for an address, so the
+  call is refused rather than producing a link that reads as restricted and lets everyone in.
+- **Four wording changes**, all facts the tools did not state. `revoke_share` now says a link's
+  settings cannot be changed after it is made, and that switching one off to create a replacement
+  leaves the recipient holding a dead address. `list_shares` says its `opened` and `last_open`
+  fields already answer "which of my links has nobody opened". `share_html` says the email gate is
+  on by default, because that is a step the recipient has to take. The server instructions point at
+  `whoami` for what a free account has left, and say not to retry a publish refused for that
+  reason.
+
 ## 0.3.1 — 2026-09-03
 
 The registry entry carries the remote connector endpoint. `whoami` states links truthfully on paid

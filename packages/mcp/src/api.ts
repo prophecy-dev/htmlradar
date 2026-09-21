@@ -82,6 +82,20 @@ export interface ShareListResponse {
   next_before: string | null;
 }
 
+export interface DocumentListItem {
+  document_id: string;
+  title: string;
+  created_at: string;
+  /** How many tracked links point at this document. Zero means it has never been sent. */
+  share_count: number;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentListItem[];
+  /** The cursor for the next page, or null when this was the last one. */
+  next_before: string | null;
+}
+
 export interface RevokeResponse {
   share_id: string;
   url: string;

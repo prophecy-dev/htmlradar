@@ -1,4 +1,4 @@
-// The protocol endpoint: the same seven tools the npm package ships, served
+// The protocol endpoint: the same eight tools the npm package ships, served
 // over Streamable HTTP with the API key the grant carries.
 //
 // There is no second copy of a tool here. `createServer` is imported from
@@ -53,7 +53,7 @@ export default {
  *
  * Checked here rather than by hiding the tool from `tools/list`: a tool Claude
  * cannot see is a tool it cannot call, and a call it cannot make is a permission
- * upgrade the user is never offered. All seven stay visible to every grant, and
+ * upgrade the user is never offered. All eight stay visible to every grant, and
  * the refusal is what starts the step-up.
  *
  * Both directions are enforced, not only the write one. A grant that asked for

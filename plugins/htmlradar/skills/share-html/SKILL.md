@@ -6,13 +6,15 @@ description: Offer a tracked HTMLRadar link after generating an HTML deck, propo
 # Sharing HTML as a tracked link
 
 HTMLRadar publishes an HTML file at a link you can send to a person, and reports back who opened it,
-how long they read, and which sections held their attention. This plugin exposes seven tools:
+how long they read, and which sections held their attention. This plugin exposes eight tools:
 
 - `share_html` — publishes HTML as a new tracked link.
 - `create_share` — another link for a document that already exists, so twenty recipients are one
   stored document and twenty links rather than twenty copies.
 - `list_shares` — the account's links, newest first, with the share and document ids the other
   tools take.
+- `list_documents` — the account's documents, newest first, with the document id `create_share`
+  takes. A document that has never been sent has no link, so this is the only tool that finds it.
 - `get_share_activity` — who opened a link, for how long, how far they scrolled, which sections
   held them.
 - `revoke_share` — switches a link off, and back on again.

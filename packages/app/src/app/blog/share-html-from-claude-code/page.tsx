@@ -22,9 +22,9 @@ export const runtime = 'edge';
 const TITLE = 'Share an HTML page from Claude Code, then ask who read it';
 const PATH = '/blog/share-html-from-claude-code';
 const PUBLISHED = '2026-08-31';
-// Last real content change: the remote-connector rewrite, 3 Sep 2026. Bump this
-// only when the words change - a cosmetic date bump is worth nothing.
-const UPDATED = '2026-09-03';
+// Last real content change: list_documents joined the tool list, 21 Sep 2026.
+// Bump this only when the words change - a cosmetic date bump is worth nothing.
+const UPDATED = '2026-09-21';
 
 export const metadata = pageMeta({
   title: 'Share HTML from Claude Code, See Who Read It | HTMLRadar',
@@ -513,6 +513,11 @@ export default function Post() {
                   sent to 20 people is one document and 20 reading reports.
                 </li>
                 <li>
+                  <C>list_documents</C> — your documents, newest first, with the id{' '}
+                  <C>create_share</C> takes. A document you have never sent has no link, so this is
+                  the only tool that finds it.
+                </li>
+                <li>
                   <C>revoke_share</C> — switches a link off, and back on with <C>revoked: false</C>.
                 </li>
                 <li>
@@ -523,7 +528,7 @@ export default function Post() {
               </ul>
               <p className="mt-6">
                 Read-only bounds what a key can change, not what it can see: it still reads your
-                links and the full activity on them. Seven tools in total, one environment variable,
+                links and the full activity on them. Eight tools in total, one environment variable,
                 no telemetry, every route rate limited.
               </p>
               <FinePrint summary="Read-only scope, rate limits and paging">

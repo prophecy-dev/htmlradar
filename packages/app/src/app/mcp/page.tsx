@@ -168,7 +168,13 @@ const SHARE_INPUTS = [
     'allowed_email_domains',
     'string[]',
     'none',
-    'Only these domains may open it, e.g. ["acme.com"].',
+    'Only these domains may open it, e.g. ["acme.com"]. Up to 500.',
+  ],
+  [
+    'allowed_emails',
+    'string[]',
+    'none',
+    'Only these exact addresses may open it, e.g. ["ravi@acme.com"]. Up to 500. Needs the email gate.',
   ],
   ['expires_in_hours', 'integer', 'never', 'Positive whole number. Link stops working after it.'],
   [
@@ -676,7 +682,7 @@ env_vars = ["HTMLRADAR_API_KEY"]`}
 
           <section className="mt-14" id="tools">
             <h2 className="font-serif text-[28px] leading-snug text-ink md:text-[32px]">
-              Seven tools
+              Eight tools
             </h2>
             <p className="mt-4 max-w-2xl text-[16px] leading-relaxed text-ink-soft">
               You do not call them by name. You say what you want:
@@ -765,6 +771,19 @@ did anyone read the proposal I shared yesterday?`}
             <CodeBlock label="example output" code={LIST_OUTPUT} />
 
             <h3 className="mt-8 font-mono text-[11px] uppercase tracking-[0.16em] text-signal-dark">
+              list_documents
+            </h3>
+            <p className="mt-4 text-[15px] leading-relaxed text-ink-soft">
+              Lists your documents, newest first: the title, when it was created, how many links
+              point at it, and the document id{' '}
+              <span className="font-mono text-[13px]">create_share</span> and{' '}
+              <span className="font-mono text-[13px]">replace_document</span> take. A document you
+              have never sent has no link, so it appears here and in no other tool — which is what
+              makes &ldquo;send last month&rsquo;s proposal to these five people&rdquo; work without
+              you looking anything up. It returns no document contents.
+            </p>
+
+            <h3 className="mt-8 font-mono text-[11px] uppercase tracking-[0.16em] text-signal-dark">
               revoke_share
             </h3>
             <p className="mt-4 text-[15px] leading-relaxed text-ink-soft">
@@ -835,12 +854,12 @@ did anyone read the proposal I shared yesterday?`}
               Versions
             </h2>
             <p className="mt-4 max-w-2xl text-[16px] leading-relaxed text-ink-soft">
-              Current: <span className="font-mono text-[14px]">htmlradar-mcp@0.3.1</span> on npm,
+              Current: <span className="font-mono text-[14px]">htmlradar-mcp@0.4.0</span> on npm,
               Node.js 20 or newer. Every install line above runs{' '}
               <span className="font-mono text-[14px]">npx -y htmlradar-mcp</span>, which fetches the
               latest version. The Claude Code plugin is different: its{' '}
               <span className="font-mono text-[14px]">.mcp.json</span> pins{' '}
-              <span className="font-mono text-[14px]">htmlradar-mcp@0.3.1</span>, and plugin users
+              <span className="font-mono text-[14px]">htmlradar-mcp@0.4.0</span>, and plugin users
               move to a newer server when the plugin itself is updated. Third-party marketplaces do
               not auto-update by default, so run{' '}
               <span className="font-mono text-[14px]">/plugin marketplace update htmlradar</span> to

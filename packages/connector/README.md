@@ -17,11 +17,12 @@ wraps that key inside an OAuth grant. From then on every tool call is exactly th
 `htmlradar-mcp` npm package makes, with an ordinary API key, against the same `/api/v1` endpoints.
 There is no second identity system.
 
-## The seven tools
+## The eight tools
 
-The same seven the npm package ships, imported from `packages/mcp` rather than copied:
-`whoami`, `list_shares`, `get_share_activity` (read), and `share_html`, `create_share`,
-`replace_document`, `revoke_share` (write). All seven are visible to every connection. A read-only
+The same eight the npm package ships, imported from `packages/mcp` rather than copied:
+`whoami`, `list_shares`, `list_documents`, `get_share_activity` (read), and `share_html`,
+`create_share`, `replace_document`, `revoke_share` (write). All eight are visible to every
+connection. A read-only
 connection calling a write tool gets `403` with a challenge that asks for both permissions, which is
 what makes a client offer the upgrade rather than simply failing.
 

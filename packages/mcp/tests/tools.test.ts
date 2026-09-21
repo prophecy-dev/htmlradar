@@ -15,6 +15,7 @@ import {
   formatScroll,
   formatSectionTime,
   getShareActivity,
+  listDocuments,
   listShares,
   MAX_HTML_BYTES,
   replaceDocument,
@@ -126,6 +127,7 @@ describe('no usable API key', () => {
     return [
       await whoami(config),
       await listShares(config, {}),
+      await listDocuments(config, {}),
       await getShareActivity(config, { share_id: 'shr_1' }),
       await shareHtml(config, { html: '<p/>', require_email: true }),
       await createShare(config, { document_id: 'doc_1', require_email: true }),
@@ -143,7 +145,7 @@ describe('no usable API key', () => {
     ],
     ['malformed', { HTMLRADAR_API_KEY: 'nonsense' }, MALFORMED_API_KEY_MESSAGE],
   ])(
-    'answers all seven tools with the next step when the key is %s, and never calls the API',
+    'answers all eight tools with the next step when the key is %s, and never calls the API',
     async (_name, env, expected) => {
       const fetchMock = mockFetch(200, {});
       for (const result of await callEveryTool(loadConfig(env))) {
@@ -753,6 +755,139 @@ describe('list_shares', () => {
   });
 });
 
+const DOCUMENTS = {
+  documents: [
+    {
+      document_id: 'doc_1',
+      title: 'Q3 proposal',
+      created_at: '2026-08-30T10:00:00Z',
+      share_count: 2,
+    },
+    {
+      document_id: 'doc_2',
+      title: 'Pricing one-pager',
+      created_at: '2026-08-29T10:00:00Z',
+      share_count: 0,
+    },
+  ],
+  next_before: null,
+};
+
+describe('list_documents', () => {
+  it('prints the document id the publishing tools take, and how many links exist', async () => {
+    const fetchMock = mockFetch(200, DOCUMENTS);
+    const text = body(await listDocuments(config, {}));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://htmlradar.com/api/v1/documents');
+    expect(text).toContain('Q3 proposal · 2 links');
+    expect(text).toContain('document doc_1');
+    // The document nobody has been sent — the whole reason this tool exists,
+    // because it appears in no share listing.
+    expect(text).toContain('Pricing one-pager · no links yet');
+    expect(text).toContain('document doc_2');
+  });
+
+  // Titles are lifted out of whatever HTML the customer uploaded.
+  it('marks the customer-written titles as data', async () => {
+    mockFetch(200, DOCUMENTS);
+    expect(body(await listDocuments(config, {}))).toContain(UNTRUSTED_NOTICE);
+  });
+
+  it('never returns document contents', async () => {
+    mockFetch(200, DOCUMENTS);
+    const text = body(await listDocuments(config, {}));
+    expect(text).not.toMatch(/<[a-z!/]/i);
+  });
+
+  it('reads only, whatever it is handed', async () => {
+    const fetchMock = mockFetch(200, DOCUMENTS);
+    await listDocuments(config, { before: '2026-08-15T00:00:00Z|doc_9' });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe(
+      'https://htmlradar.com/api/v1/documents?before=2026-08-15T00%3A00%3A00Z%7Cdoc_9',
+    );
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(init?.body).toBeUndefined();
+  });
+
+  it('tells the agent how to ask for the next page', async () => {
+    mockFetch(200, { ...DOCUMENTS, next_before: '2026-08-01T00:00:00Z|doc_5' });
+    expect(body(await listDocuments(config, {}))).toContain('before: "2026-08-01T00:00:00Z|doc_5"');
+  });
+
+  it('says plainly when there is nothing to list', async () => {
+    mockFetch(200, { documents: [], next_before: null });
+    expect(body(await listDocuments(config, {}))).toMatch(/No documents on this account yet/);
+  });
+
+  it('relays a read-only refusal rather than retrying', async () => {
+    mockFetch(403, { error: 'read_only_key', message: 'This key is read-only.' });
+    const result = await listDocuments(config, {});
+    expect(result.isError).toBe(true);
+    expect(body(result)).toMatch(/Do not retry this call/);
+  });
+});
+
+describe('restricting a link to named individuals', () => {
+  const created = {
+    share_id: 'shr_2',
+    document_id: 'doc_1',
+    url: 'https://htmlradar.page/r/acme-two',
+    dashboard_url: 'https://htmlradar.com/docs/doc_1',
+  };
+
+  it('sends allowed_emails from share_html', async () => {
+    const fetchMock = mockFetch(201, created);
+    await shareHtml(config, {
+      html: '<p>deck</p>',
+      require_email: true,
+      allowed_emails: ['ravi@acme.com', 'priya@acme.com'],
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)['allowed_emails']).toEqual([
+      'ravi@acme.com',
+      'priya@acme.com',
+    ]);
+  });
+
+  it('sends allowed_emails from create_share, beside the domains and not instead of them', async () => {
+    const fetchMock = mockFetch(201, created);
+    await createShare(config, {
+      document_id: 'doc_1',
+      require_email: true,
+      allowed_email_domains: ['acme.com'],
+      allowed_emails: ['ravi@other.example'],
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      allowed_email_domains: ['acme.com'],
+      allowed_emails: ['ravi@other.example'],
+    });
+  });
+
+  it('omits the field entirely when it was not asked for', async () => {
+    const fetchMock = mockFetch(201, created);
+    await createShare(config, { document_id: 'doc_1', require_email: true });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('allowed_emails');
+  });
+
+  // The API refuses the list with the gate off; the tool's job is to hand the
+  // reason to the model rather than swallow or retry it.
+  it('relays the API refusal when the email gate is off', async () => {
+    mockFetch(422, {
+      error: 'validation',
+      message: '"allowed_emails" needs "require_email": true.',
+    });
+    const result = await shareHtml(config, {
+      html: '<p>deck</p>',
+      require_email: false,
+      allowed_emails: ['ravi@acme.com'],
+    });
+    expect(result.isError).toBe(true);
+    expect(body(result)).toContain('require_email');
+  });
+});
+
 describe('revoke_share', () => {
   it('switches a link off by default and explains what a recipient now sees', async () => {
     const fetchMock = mockFetch(200, {
@@ -874,11 +1009,12 @@ describe('the tools the server publishes', () => {
     return (await client.listTools()).tools;
   }
 
-  it('publishes all seven, and no delete', async () => {
+  it('publishes all eight, and no delete', async () => {
     const names = (await listTools()).map((tool) => tool.name).sort();
     expect(names).toEqual([
       'create_share',
       'get_share_activity',
+      'list_documents',
       'list_shares',
       'replace_document',
       'revoke_share',
@@ -903,7 +1039,7 @@ describe('the tools the server publishes', () => {
   // pass. A description says what the tool does and what happens as a result;
   // the one routing paragraph lives in the server's instructions, which this
   // list deliberately does not police.
-  it('leaves behavioural directions out of all seven tool descriptions', async () => {
+  it('leaves behavioural directions out of all eight tool descriptions', async () => {
     const banned = [
       /never call this tool/i,
       /confirm with the user/i,
@@ -915,7 +1051,7 @@ describe('the tools the server publishes', () => {
       /\byou (should|must|do not|should not)\b/i,
     ];
     const tools = await listTools();
-    expect(tools).toHaveLength(7);
+    expect(tools).toHaveLength(8);
     for (const tool of tools) {
       for (const phrase of banned) {
         expect(tool.description ?? '', `${tool.name} / ${phrase}`).not.toMatch(phrase);
@@ -925,7 +1061,7 @@ describe('the tools the server publishes', () => {
 
   // The exact set, per tool, rather than a spot check: these are what a
   // client reads to decide whether to confirm before running something.
-  it('publishes the exact annotations for each of the seven', async () => {
+  it('publishes the exact annotations for each of the eight', async () => {
     const expected: Record<string, Record<string, unknown>> = {
       share_html: {
         title: 'Share HTML as a tracked link',
@@ -943,6 +1079,11 @@ describe('the tools the server publishes', () => {
       },
       list_shares: {
         title: 'List tracked links on this account',
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+      list_documents: {
+        title: 'List documents on this account',
         readOnlyHint: true,
         openWorldHint: true,
       },
@@ -1024,6 +1165,46 @@ describe('the tools the server publishes', () => {
     const tool = (await listTools()).find((t) => t.name === 'replace_document');
     expect(tool?.description).toMatch(/Every existing link stays exactly as it is/);
     expect(tool?.description).toMatch(/screened for phishing signals/);
+  });
+
+  // The four facts the gap analysis found missing (2026-09-21). Each states
+  // something true about the product that an assistant could not otherwise
+  // know; none of them tells the model how to behave, which the ban list
+  // above still polices.
+  it('says a link cannot be edited after it is made, on the tool that would be misused for it', async () => {
+    const tool = (await listTools()).find((t) => t.name === 'revoke_share');
+    expect(tool?.description).toMatch(/settings cannot be changed after it is made/i);
+    expect(tool?.description).toMatch(/dead address/i);
+    expect(tool?.description).toMatch(/agrees to explicitly/i);
+  });
+
+  it('says list_shares already answers which links nobody opened', async () => {
+    const tool = (await listTools()).find((t) => t.name === 'list_shares');
+    expect(tool?.description).toMatch(/has nobody opened/i);
+    expect(tool?.description).toMatch(/without a get_share_activity report for each one/i);
+  });
+
+  it('says the email gate is on by default, because the recipient has to do it', async () => {
+    const tool = (await listTools()).find((t) => t.name === 'share_html');
+    expect(tool?.description).toMatch(/By default the recipient is asked for their email address/i);
+  });
+
+  it('says list_documents returns no contents, and that it reaches an unsent document', async () => {
+    const tool = (await listTools()).find((t) => t.name === 'list_documents');
+    expect(tool?.description).toMatch(/returns no document contents/i);
+    expect(tool?.description).toMatch(/A document with no links appears here and nowhere else/i);
+  });
+
+  it('offers the named-people list on both publishing tools, with the same shape', async () => {
+    const tools = await listTools();
+    const shapes = ['share_html', 'create_share'].map(
+      (name) => tools.find((t) => t.name === name)?.inputSchema.properties?.['allowed_emails'],
+    );
+    expect(shapes[0]).toBeDefined();
+    expect(shapes[0]).toEqual(shapes[1]);
+    expect(JSON.stringify(shapes[0])).toMatch(/Needs the email gate/);
+    // The description must not promise more than the route accepts.
+    expect(JSON.stringify(shapes[0])).toMatch(/Up to 500 addresses/);
   });
 
   it('makes the reading detail optional and says why', async () => {
