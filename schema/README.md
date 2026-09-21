@@ -1,8 +1,6 @@
 # Schema
 
-Apply every numbered file directly in this folder, in ascending numeric order, starting at `001`, via the Supabase SQL Editor (or `psql`). No last file is named here on purpose — the folder grows, and a number written down goes stale the next time it does. As of this commit it ends at `052_custom_domains.sql`. Never apply anything in `tests/` — those are destructive test programs for a scratch database only.
-
-- `053_onboarding_email_question.sql` — the welcome e-mail closes with one direct question instead of "Reply to this and it reaches me."
+Apply every numbered file directly in this folder, in ascending numeric order, starting at `001`, via the Supabase SQL Editor (or `psql`). No last file is named here on purpose — the folder grows, and a number written down goes stale the next time it does. As of this commit it ends at `053_onboarding_email_question.sql`. Never apply anything in `tests/` — those are destructive test programs for a scratch database only.
 
 Two extensions are required and `001_init.sql` creates both: `pgcrypto` and `pg_net`. A third, `pg_cron`, is optional; `044` and `045` use it for scheduling and skip that step with a notice where it is absent.
 
