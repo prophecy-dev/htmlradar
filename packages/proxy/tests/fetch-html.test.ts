@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchDocumentHtml, isPublicHttpUrl } from '../src/fetch-html.js';
-import type { Document } from '../src/supabase.js';
+import type { Document } from '../src/store.js';
 import type { Env } from '../src/env.js';
 
 describe('isPublicHttpUrl public-host guard', () => {

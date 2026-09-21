@@ -1,10 +1,10 @@
 import { escapeHtml } from './escape.js';
+import { genericCard, ogMeta, type OgCard } from './og.js';
 
 // Recipient-facing HTML shells served by the proxy: the gate forms (email,
-// password) and the error states (revoked, expired, not found, source
-// unreachable). These are every recipient's first impression of HTMLRadar
-// — same care + brand fidelity as the marketing site, none of the chrome
-// or weight.
+// password), the error states (revoked, expired, not found, source
+// unreachable) and the privacy notice. Every recipient's first impression
+// of a shared link — care over chrome.
 //
 // Design intent:
 //   - Warm cream paper + oxblood accent + Fraunces serif headline.
@@ -25,8 +25,10 @@ import { escapeHtml } from './escape.js';
 //     403 revoked, 404 not found, 410 expired, 502 source-unreachable).
 //   - Output Content-Type stays text/html; charset=utf-8.
 //
-// OG meta tags are generic ("A document on HTMLRadar") — by design, no
-// recipient or sender names leak into link unfurls.
+// OG meta tags. Every shell starts with a generic card between two markers;
+// a gate page for a real share swaps in that share's card with withCard, so a
+// link pasted into Slack unfurls with the title the sender chose even when
+// the link is gated. Never recipient names, never document body text.
 
 const FONTS_LINK = `
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -34,38 +36,27 @@ const FONTS_LINK = `
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&display=swap" rel="stylesheet">
 `.trim();
 
-// Generic OG tags. No personalisation — see privacy note above.
-// Copy stays neutral and inviting (NOT "tracked document delivery" —
-// telling the recipient they're being tracked before they click sets
-// the wrong tone, and most premium document-share products don't say
-// it explicitly).
-const OG_TAGS = `
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="HTMLRadar">
-<meta property="og:title" content="A document on HTMLRadar">
-<meta property="og:description" content="A document has been shared with you. Open to view.">
-<meta property="og:image" content="https://htmlradar.com/og-card.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="A document on HTMLRadar">
-<meta name="twitter:description" content="A document has been shared with you. Open to view.">
-<meta name="twitter:image" content="https://htmlradar.com/og-card.png">
-<meta name="robots" content="noindex, nofollow">
-`.trim();
+const OG_START = '<!--og-->';
+const OG_END = '<!--/og-->';
+const ogBlock = (card: OgCard): string => `${OG_START}\n${ogMeta(card)}\n${OG_END}`;
 
-// Compact radar mark — single ring + sweep line + center dot. Drawn in
-// the brand badge's paper-cream so it reads against the solid oxblood
-// pill at the top-right of every shell. No animation (would compete with
-// the content).
-const RADAR_MARK = `
-<svg aria-hidden viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px">
-  <circle cx="12" cy="12" r="9" fill="none" stroke="#FBF1E8" stroke-width="1.3" opacity="0.45"/>
-  <circle cx="12" cy="12" r="5" fill="none" stroke="#FBF1E8" stroke-width="1.3" opacity="0.7"/>
-  <line x1="12" y1="12" x2="12" y2="3" stroke="#FBF1E8" stroke-width="1.5" stroke-linecap="round"/>
-  <circle cx="12" cy="12" r="1.7" fill="#FBF1E8"/>
-</svg>
-`.trim();
+/**
+ * Swaps the generic card on a shell for `card`. Only this module's shells carry
+ * the markers, so on anything else this returns the response unchanged.
+ */
+export async function withCard(res: Response, card: OgCard): Promise<Response> {
+  const html = await res.text();
+  const start = html.indexOf(OG_START);
+  const end = html.indexOf(OG_END);
+  const out =
+    start >= 0 && end > start
+      ? html.slice(0, start) + ogBlock(card) + html.slice(end + OG_END.length)
+      : html;
+  return new Response(out, { status: res.status, headers: res.headers });
+}
+
+/** Where the source is, as the AGPL asks. */
+const SOURCE_URL = 'https://github.com/prophecy-dev/htmlradar';
 
 const STYLES = `
 :root {
@@ -102,43 +93,6 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 32px 28px 56px;
-}
-/* Brand badge — solid oxblood pill anchored top-right of every shell.
-   Unmissable by design: the recipient should know within a beat that
-   the link they're on belongs to HTMLRadar, not a phishing replica.
-   Position is fixed so the pill stays anchored even on long forms. */
-.brand-mount {
-  position: fixed;
-  top: 18px;
-  right: 18px;
-  z-index: 5;
-}
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font: 600 11px/1 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--paper);
-  text-decoration: none;
-  background: var(--signal);
-  border-radius: 999px;
-  /* Vertical padding gives the pill a 44px tap target on mobile
-     (iOS HIG minimum) while keeping the desktop visual unchanged. */
-  padding: 12px 16px 12px 14px;
-  min-height: 44px;
-  box-sizing: border-box;
-  box-shadow: 0 1px 0 rgba(31, 17, 8, 0.12), 0 6px 18px -8px rgba(122, 31, 46, 0.35);
-  transition: background-color 120ms ease, transform 120ms ease;
-}
-.brand:hover { background: var(--signal-dark); }
-.brand:active { transform: translateY(0.5px); }
-@media (max-width: 480px) {
-  .brand-mount { top: 14px; right: 14px; }
-  /* On phones we keep the 44px tap target but tighten letter-spacing
-     so the pill doesn't dominate the small viewport. */
-  .brand { padding: 11px 14px 11px 12px; font-size: 10.5px; letter-spacing: 0.14em; }
 }
 .card {
   margin-top: 18vh;
@@ -203,9 +157,7 @@ label {
   letter-spacing: 0.16em;
   color: var(--graphite);
 }
-/* The report affordance under each gate. Quiet on purpose: a recipient
-   looking for it finds it, and nobody else is nudged into suspecting the
-   document they were sent. */
+/* The privacy line under each gate. Quiet, but always there. */
 .report {
   margin-top: 26px;
   font-size: 12.5px;
@@ -281,23 +233,21 @@ const SHELL = (title: string, body: string, status: number, kicker?: string): Re
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)} — HTMLRadar</title>
-${OG_TAGS}
+<title>${escapeHtml(title)}</title>
+${ogBlock(genericCard('', 'Shared document'))}
+<meta name="robots" content="noindex, nofollow">
 ${FONTS_LINK}
 <style>${STYLES}</style>
 </head>
 <body>
-<div class="brand-mount">
-  <a class="brand" href="https://htmlradar.com/?utm_source=share-gate&utm_medium=shared-doc" rel="noopener">${RADAR_MARK}<span>HTMLRadar</span></a>
-</div>
 <div class="frame">
   <main class="card">
     ${kicker ? `<p class="kicker">${escapeHtml(kicker)}</p>` : ''}
     ${body}
   </main>
   <footer class="footer">
-    <span>Open source · AGPL-3.0</span>
-    <a href="https://github.com/htmlradar/htmlradar" rel="noopener">github.com/htmlradar/htmlradar</a>
+    <a href="/privacy">Privacy</a>
+    <a href="${SOURCE_URL}" rel="noopener">Source · AGPL-3.0</a>
   </footer>
 </div>
 </body>
@@ -329,19 +279,14 @@ ${FONTS_LINK}
     },
   );
 
-// Common footer for all error shells. One soft "what is this?" link
-// — recipients are often opening their first HTMLRadar link ever and
-// landing on an error page; without context the page reads like a
-// dead end. We don't say "contact support@htmlradar.com" because the
-// fix is almost always on the sender's side, not ours; we point the
-// recipient there instead.
+// Common footer for all error shells. The fix is almost always on the
+// sender's side, so the recipient is pointed there.
 const ERROR_FOOTER = `
 <div style="margin-top:32px;padding-top:24px;border-top:1px dashed var(--line);">
   <p style="margin:0 0 14px 0;font-size:13.5px;line-height:1.55;color:var(--graphite);">
     Need a fresh link? Reply to the person who sent this to you — they can
     update or re-send in a few seconds.
   </p>
-  <a href="https://htmlradar.com/?utm_source=share-error-page&utm_medium=shared-doc" style="display:inline-block;color:#7A1F2E;text-decoration:none;border-bottom:1px dotted currentColor;font-size:13.5px;padding:4px 0;">What is HTMLRadar? &rarr;</a>
 </div>
 `.trim();
 
@@ -385,19 +330,39 @@ export const sourceUnreachable = (): Response =>
     'Source error',
   );
 
-// The recipient's route to us, on both gates.
-//
-// A phishing page pushed through HTMLRadar is opened by somebody who can tell
-// it is one — the person it was aimed at. Nothing else in the pipeline can:
-// the document is the customer's own HTML, and we do not read it. So the gate
-// carries the one control the sender cannot remove, because the sender's HTML
-// never renders on this page.
-//
-// Not on the document itself. That decision stands: a badge inside somebody's
-// deck is chrome on a stranger's work, and the gates are where an unexpected
-// document is met anyway.
-const reportLink = (slug: string): string =>
-  `<p class="report"><a href="/r/${escapeHtml(slug)}/report">Report this document</a></p>`;
+/**
+ * The privacy notice at /privacy: what a link records, for whom, and how to
+ * get it removed. EU recipients are owed this before they are tracked, which
+ * is why every gate and every served document links here.
+ */
+export const privacyPage = (opts: { brand: string; contact: string | null }): Response => {
+  const brand = escapeHtml(opts.brand);
+  const contact = opts.contact
+    ? /^https?:\/\//i.test(opts.contact)
+      ? `<a href="${escapeHtml(opts.contact)}" rel="noopener">${escapeHtml(opts.contact)}</a>`
+      : /@/.test(opts.contact)
+        ? `<a href="mailto:${escapeHtml(opts.contact)}">${escapeHtml(opts.contact)}</a>`
+        : escapeHtml(opts.contact)
+    : 'the person who sent you the link';
+  return SHELL(
+    'Privacy',
+    `<h1>What this link records.</h1>
+     <p class="lede">Links on this site are sent by the ${brand} team (Somnia). When you open one, the sender learns that it was read and how. This page says exactly what is kept.</p>
+     <p class="lede"><strong>About you.</strong> Your email address if the link asked for one, otherwise a random identifier bound to this document; when you first and last opened it and how many times; your browser's identification string; the page that linked you here; your country and city (from the network, not your device); device type, operating system and browser.</p>
+     <p class="lede"><strong>About each visit.</strong> Which version of the document you saw, when the visit started and last reported, the seconds you were actively reading, how far you scrolled, the time spent on each section or slide, and any attached files you downloaded.</p>
+     <p class="lede"><strong>What is not recorded.</strong> Your IP address, cursor movements, keystrokes, screenshots or a replay of your visit. Link previews (Slack, Telegram, LinkedIn and similar) are not counted as reads.</p>
+     <p class="lede"><strong>Who sees it.</strong> The ${brand} team member who sent the link, in an internal dashboard. It is not sold, not shared with advertisers and not used for marketing. The sender may get one alert, by email or Telegram, when you first start reading.</p>
+     <p class="lede"><strong>How long.</strong> Until the sender deletes the document. To have your records removed sooner, or to ask what is held about you, contact ${contact}.</p>
+     <p class="lede"><strong>Opting out.</strong> Add <code>?optout=1</code> to any link on this site and confirm; documents then open with no tracking in this browser.</p>`,
+    200,
+    'Privacy',
+  );
+};
+
+// The privacy notice, linked under every gate so a recipient can see what is
+// recorded before they type anything.
+const privacyLink = (): string =>
+  `<p class="report">This link is tracked. <a href="/privacy">What the sender sees</a></p>`;
 
 export const passwordForm = (slug: string, error?: string): Response =>
   SHELL(
@@ -417,7 +382,7 @@ export const passwordForm = (slug: string, error?: string): Response =>
        <div class="error" role="alert" aria-live="polite">${error ? escapeHtml(error) : ''}</div>
        <button type="submit">Continue</button>
      </form>
-     ${reportLink(slug)}`,
+     ${privacyLink()}`,
     error ? 401 : 200,
     'Password required',
   );
@@ -437,13 +402,13 @@ export const optOutConfirm = (
     optout === '1' ? 'Turn off read tracking' : 'Turn read tracking back on',
     `<h1>${
       optout === '1'
-        ? 'Turn off read tracking for HTMLRadar links in this browser?'
+        ? 'Turn off read tracking for links on this site in this browser?'
         : 'Turn read tracking back on?'
     }</h1>
      <p class="lede">${
        optout === '1'
-         ? 'The sender will no longer see that you opened this document, how long you read, or which sections you spent time on. The document itself opens exactly as before. This applies to every HTMLRadar link you open in this browser.'
-         : 'The sender will see that you opened their document, how long you read, and which sections you spent time on — the same as any HTMLRadar link. You can turn it off again at any time.'
+         ? 'The sender will no longer see that you opened this document, how long you read, or which sections you spent time on. The document itself opens exactly as before. This applies to every link on this site you open in this browser.'
+         : 'The sender will see that you opened their document, how long you read, and which sections you spent time on — the same as any link on this site. You can turn it off again at any time.'
      }</p>
      ${status === 200 ? '' : '<div class="error" role="alert">That confirmation expired. Press the button to confirm again.</div>'}
      <form method="POST" action="/r/${escapeHtml(slug)}">
@@ -476,10 +441,10 @@ export const emailGateForm = (slug: string, error?: string, token?: string): Res
          ${error ? 'class="invalid" aria-invalid="true"' : ''}
        />
        <div class="error" role="alert" aria-live="polite">${error ? escapeHtml(error) : ''}</div>
-       <p class="lede">Reading activity on this document is shared with the sender. <a href="https://htmlradar.com/privacy">How HTMLRadar handles this</a></p>
+       <p class="lede">Reading activity on this document is shared with the sender. <a href="/privacy">What is recorded</a></p>
        <button type="submit">Continue</button>
      </form>
-     ${reportLink(slug)}`,
+     ${privacyLink()}`,
     error ? 401 : 200,
     'Email required',
   );
@@ -562,66 +527,7 @@ export const verifyCodeForm = (
        <button type="submit">Open the document</button>
      </form>
      <p class="report"><a href="/r/${escapeHtml(slug)}">Use a different address</a></p>
-     ${reportLink(slug)}`,
+     ${privacyLink()}`,
     status,
     'Code required',
-  );
-
-// The four reasons, in the order they appear in the menu. Exported because
-// index.ts checks a submission against this same list — one place to change
-// if a fifth is ever worth having, and the database's CHECK constraint
-// (schema/037) is the third copy that stops a mismatch from being written.
-export const REPORT_REASONS = [
-  ['phishing', 'Phishing or impersonation'],
-  ['malware', 'Malware'],
-  ['personal_data', 'Sensitive personal data'],
-  ['other', 'Something else'],
-] as const;
-
-export const NOTE_MAX_LENGTH = 500;
-
-// The report form. No sign-in, no email field, no name: asking a person to
-// identify themselves before they can tell us a page is a fake login is
-// asking the one thing that stops most people reporting.
-//
-// The menu opens on an empty choice rather than on the first reason. A
-// pre-selected "phishing" would be the answer given by everyone who did not
-// read the menu, and a reason nobody chose is a reason nobody can triage on.
-export const reportForm = (slug: string, error?: string): Response =>
-  SHELL(
-    'Report this document',
-    `<h1>Report this document.</h1>
-     <p class="lede">This goes to HTMLRadar, not to whoever sent you the link. We look at every report. You do not need an account, and we do not ask who you are.</p>
-     <form method="POST" action="/r/${escapeHtml(slug)}/report">
-       <label for="reason">What is wrong with it</label>
-       <select id="reason" name="reason" required autofocus>
-         <option value="" disabled selected>Choose one</option>
-         ${REPORT_REASONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('\n         ')}
-       </select>
-       <label for="note">Anything else we should know (optional)</label>
-       <textarea
-         id="note"
-         name="note"
-         maxlength="${NOTE_MAX_LENGTH}"
-         placeholder="Up to ${NOTE_MAX_LENGTH} characters"
-       ></textarea>
-       <div class="error" role="alert" aria-live="polite">${error ? escapeHtml(error) : ''}</div>
-       <button type="submit">Send report</button>
-     </form>`,
-    error ? 400 : 200,
-    'Report abuse',
-  );
-
-// The confirmation. It promises nothing we cannot do: there is no reply,
-// because we deliberately did not ask for an address to reply to.
-export const reportSent = (): Response =>
-  SHELL(
-    'Report received',
-    `<h1>Report received.</h1>
-     <p class="lede">Thank you. Somebody at HTMLRadar reads these. We cannot write back — the report is anonymous and we did not ask for your address — so if the document is a fake sign-in page, treat anything you typed into it as compromised.</p>
-     <div style="margin-top:32px;padding-top:24px;border-top:1px dashed var(--line);">
-       <a href="https://htmlradar.com/?utm_source=share-report-page&utm_medium=shared-doc" style="display:inline-block;color:#7A1F2E;text-decoration:none;border-bottom:1px dotted currentColor;font-size:13.5px;padding:4px 0;">What is HTMLRadar? &rarr;</a>
-     </div>`,
-    200,
-    'Report received',
   );

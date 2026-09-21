@@ -45,9 +45,11 @@ const share = {
   expires_at: null,
   revoked_at: null,
   lock_deck: false,
-  host_handle: null,
-  owner_handle: null,
-  owner_tier: 'free',
+  owner_email: 'sender@hive.land',
+  owner_display_name: 'Sam',
+  document_title: 'Deck',
+  document_og_description: null,
+  document_og_image_r2_key: null,
 };
 
 const doc = {
@@ -63,23 +65,17 @@ const doc = {
 
 const getShareBySlug = vi.fn();
 
-vi.mock('../src/supabase.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/supabase.js')>('../src/supabase.js');
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
   return {
     ...actual,
     getShareBySlug: (...args: unknown[]) => getShareBySlug(...args),
-    // No hostname is a claimed customer domain unless a test says so. Real
-    // network calls must never happen here, and resolveHost reads
-    // custom_domains for every host that is not the apex or a handle.
-    getCustomDomainByHostname: vi.fn(async () => null),
     getDocument: vi.fn(async () => doc),
     listAttachmentsForDocument: vi.fn(async () => []),
     getAttachment: vi.fn(async () => null),
-    logAppEvent: vi.fn(async () => undefined),
     logAttachmentDownload: vi.fn(async () => undefined),
     getViewerIdByShareEmail: vi.fn(async () => null),
     verifySharePassword: vi.fn(async () => 'ok'),
-    notifyDisabledAttempt: vi.fn(async () => undefined),
   };
 });
 
@@ -96,14 +92,9 @@ vi.mock('../src/fetch-html.js', () => ({
 type Env = import('../src/env.js').Env;
 
 const baseEnv = {
-  SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-  SUPABASE_ANON_KEY: 'anon-key',
   SESSION_SECRET: SECRET,
-  TRACKER_URL: 'https://htmlradar.com/v1/tracker.js',
+  GATE_FLOOR_MS: '0',
 } as unknown as Env;
-
-const wrapperOn = { ...baseEnv, TRUST_WRAPPER: '*' } as Env;
 
 const ctx = {
   waitUntil: () => {},
@@ -119,11 +110,7 @@ async function get(
   env: Env = baseEnv,
 ): Promise<Response> {
   const worker = (await import('../src/index.js')).default;
-  const res = await worker.fetch(
-    new Request(`https://htmlradar.page${path}`, { headers }),
-    env,
-    ctx,
-  );
+  const res = await worker.fetch(new Request(`https://docs.example${path}`, { headers }), env, ctx);
   const body = await res.text();
   return new Response(body, { status: res.status, headers: res.headers });
 }
@@ -134,7 +121,6 @@ const csp = (res: Response): string => res.headers.get('Content-Security-Policy'
 // constants, so a change to either half has to be made here on purpose.
 const SANDBOX = 'sandbox allow-scripts allow-forms allow-popups allow-downloads';
 const UNFRAMED = `${SANDBOX}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
-const FRAMED = `${SANDBOX}; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`;
 
 // The sender's own preview of a raw upload. The app mints this token; the
 // proxy only verifies it, so the test mints one the same way auth.ts does.
@@ -155,16 +141,6 @@ async function docPreviewPath(): Promise<string> {
   for (const b of sig) bin += String.fromCharCode(b);
   const mac = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `/r/_doc/${DOC_ID}?owner_doc_preview=${DOC_ID}.${expiresAt}.${mac}`;
-}
-
-// The print route is reachable only through the wrapper, which hands out both
-// halves of the binding: the cookie and the signed grant in its Print link.
-async function openWrapperForPrint(): Promise<{ cookie: string; path: string }> {
-  const res = await get('/r/acme-proposal', {}, wrapperOn);
-  const setCookie = res.headers.get('Set-Cookie') ?? '';
-  const html = await res.text();
-  const href = /href="(\/r\/acme-proposal\/print\?g=[^"]+)"/.exec(html)?.[1] ?? '';
-  return { cookie: setCookie.split(';')[0] ?? '', path: href };
 }
 
 async function emailCookieHeader(): Promise<string> {
@@ -194,19 +170,6 @@ describe('one merged policy on every response that carries customer HTML', () =>
     expect(csp(res)).toBe(UNFRAMED);
   });
 
-  it("the frame route, which is the one place frame-ancestors is 'self'", async () => {
-    const res = await get('/r/acme-proposal/frame', { 'Sec-Fetch-Dest': 'iframe' }, wrapperOn);
-    expect(res.status).toBe(200);
-    expect(csp(res)).toBe(FRAMED);
-  });
-
-  it('the print route, which is not framed', async () => {
-    const { cookie, path } = await openWrapperForPrint();
-    const res = await get(path, { cookie }, wrapperOn);
-    expect(res.status).toBe(200);
-    expect(csp(res)).toBe(UNFRAMED);
-  });
-
   it("the sender's own preview of a raw upload, which builds its own response", async () => {
     const res = await get(await docPreviewPath());
     expect(res.status).toBe(200);
@@ -231,17 +194,6 @@ describe("form-action 'none' on every response whose body is customer HTML", () 
       async () => {
         getShareBySlug.mockResolvedValue({ ...share, require_email: true });
         return get('/r/acme-proposal', { cookie: await emailCookieHeader() });
-      },
-    ],
-    [
-      'the frame route',
-      () => get('/r/acme-proposal/frame', { 'Sec-Fetch-Dest': 'iframe' }, wrapperOn),
-    ],
-    [
-      'the print route',
-      async () => {
-        const { cookie, path } = await openWrapperForPrint();
-        return get(path, { cookie }, wrapperOn);
       },
     ],
     ["the sender's raw preview", async () => get(await docPreviewPath())],
@@ -280,13 +232,5 @@ describe("HTMLRadar's own pages are not documents", () => {
     const res = await get('/r/no-such-link');
     expect(res.status).toBe(404);
     expect(csp(res)).toBe(SANDBOX);
-  });
-
-  it('the trust wrapper keeps its real origin and its own stricter policy', async () => {
-    const res = await get('/r/acme-proposal', {}, wrapperOn);
-    expect(res.status).toBe(200);
-    expect(csp(res)).not.toContain('sandbox');
-    expect(csp(res)).toContain("form-action 'none'");
-    expect(res.headers.get('X-HTMLRadar-Own-Page')).toBeNull();
   });
 });

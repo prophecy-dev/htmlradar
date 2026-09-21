@@ -30,16 +30,11 @@ const base = {
   lock_deck: false,
   expires_at: null,
   revoked_at: null,
-  host_handle: null,
-  owner_handle: null,
-  owner_tier: 'pro',
   owner_display_name: 'Dana Sender',
   owner_email: 'dana@example.test',
   document_title: 'The Proposal',
-  custom_domain_id: null,
-  custom_domain_hostname: null,
-  custom_domain_state: null,
-  custom_domain_owner_id: null,
+  document_og_description: null,
+  document_og_image_r2_key: null,
 };
 
 let share = { ...base };
@@ -72,9 +67,6 @@ let rows: Row[] = [];
 // Every issue, whether or not a message followed. What the enumeration tests
 // count, because the point is that the database work is the same either way.
 let issued: Array<{ email: string; allowedByModel: boolean }> = [];
-// Every analytics row the worker wrote. A refused send is recorded here and
-// nowhere a reader can reach, which is the point of the change.
-const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
 
 const issueVerificationCode = vi.fn(
   async (
@@ -139,12 +131,11 @@ const checkVerificationCode = vi.fn(
   },
 );
 
-vi.mock('../src/supabase.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/supabase.js')>('../src/supabase.js');
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
   return {
     ...actual,
     getShareBySlug: vi.fn(async () => share),
-    getCustomDomainByHostname: vi.fn(async () => null),
     getDocument: vi.fn(async () => doc),
     listAttachmentsForDocument: vi.fn(async () => []),
     getAttachment: vi.fn(async () => ({
@@ -159,13 +150,7 @@ vi.mock('../src/supabase.js', async () => {
     })),
     logAttachmentDownload: vi.fn(async () => undefined),
     getViewerIdByShareEmail: vi.fn(async () => null),
-    logAppEvent: vi.fn(
-      async (_e: unknown, _o: unknown, event: string, properties: Record<string, unknown>) => {
-        events.push({ event, properties });
-      },
-    ),
     verifySharePassword: vi.fn(async () => 'ok'),
-    notifyDisabledAttempt: vi.fn(async () => undefined),
     issueVerificationCode: (...a: unknown[]) =>
       (issueVerificationCode as unknown as (...x: unknown[]) => unknown)(...a),
     checkVerificationCode: (...a: unknown[]) =>
@@ -186,7 +171,8 @@ function releaseHang(): void {
   release?.();
   release = null;
 }
-vi.mock('../src/mail.js', () => ({
+vi.mock('../src/mail.js', async () => ({
+  ...(await vi.importActual<typeof import('../src/mail.js')>('../src/mail.js')),
   sendVerificationCode: vi.fn(
     async (_env: unknown, m: { to: string; code: string; host: string; documentTitle: string }) => {
       if (sendHangs) {
@@ -221,16 +207,13 @@ vi.mock('../src/fetch-html.js', () => ({
 }));
 
 const env = {
-  SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-  SUPABASE_ANON_KEY: 'anon-key',
   SESSION_SECRET: 'test-session-secret',
-  TRACKER_URL: 'https://htmlradar.com/v1/tracker.js',
   // The floor is proved once, in its own test; every other assertion here
   // would otherwise pay 1.2 seconds for nothing. See gateFloorMs in index.ts.
   GATE_FLOOR_MS: '0',
-  RESEND_API_KEY: 'test-key',
-  RESEND_FROM: 'HTMLRadar <hello@htmlradar.com>',
+  // Present so a refused send reads as the provider's refusal; the send
+  // itself is the mocked sendVerificationCode above.
+  EMAIL: { send: async () => ({}) },
   DOCS_BUCKET: { get: async () => ({ body: null }) },
 } as unknown as import('../src/env.js').Env;
 
@@ -249,7 +232,7 @@ async function settle(): Promise<void> {
   while (pending.length) await pending.shift();
 }
 
-const HOST = 'https://htmlradar.page';
+const HOST = 'https://docs.example';
 
 async function call(path: string, init: RequestInit = {}): Promise<Response> {
   const worker = (await import('../src/index.js')).default;
@@ -392,7 +375,6 @@ beforeEach(() => {
   pending.length = 0;
   lastToken = '';
   lastJar = '';
-  events.length = 0;
   sendHangs = false;
   release = null;
   vi.clearAllMocks();
@@ -800,7 +782,7 @@ describe('H — every path behind the gate honours it', () => {
 describe('G and K — the message, and a send that fails', () => {
   it('names the host the reader is on, the document and the sender', async () => {
     await post('/r/acme-proposal/email', { email: 'buyer@acme.test' });
-    expect(sent[0]!.host).toBe('htmlradar.page');
+    expect(sent[0]!.host).toBe('docs.example');
     expect(sent[0]!.title).toBe('The Proposal');
   });
 
@@ -861,15 +843,16 @@ describe('G and K — the message, and a send that fails', () => {
   });
 
   it('records a refused send with a reason, where nobody at the gate can see it', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     sendSucceeds = false;
     await post('/r/acme-proposal/email', { email: 'buyer@acme.test' });
-    const failures = events.filter((e) => e.event === 'share.code_send_failed');
+    const failures = logged.mock.calls.filter((c) => c[0] === 'verification code not sent');
     expect(failures).toHaveLength(1);
-    expect(failures[0]!.properties['reason']).toBe('provider_refused');
-    // Domain only, never the whole address: a third party's identity is not
-    // ours to file under the owner's account.
-    expect(failures[0]!.properties['email_domain']).toBe('acme.test');
-    expect(JSON.stringify(failures[0]!.properties)).not.toContain('buyer@');
+    expect(failures[0]).toContain('provider_refused');
+    // Never the address: the worker's log is not where a third party's
+    // identity belongs.
+    expect(JSON.stringify(failures[0])).not.toContain('buyer@');
+    logged.mockRestore();
   });
 });
 

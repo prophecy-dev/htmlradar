@@ -68,16 +68,13 @@ const doc = {
 
 const getShareBySlug = vi.fn();
 
-vi.mock('../src/supabase.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/supabase.js')>('../src/supabase.js');
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
   return {
     ...actual,
     getShareBySlug: (...args: unknown[]) => getShareBySlug(...args),
-    getCustomDomainByHostname: vi.fn(async () => null),
     getDocument: vi.fn(async () => doc),
     listAttachmentsForDocument: vi.fn(async () => []),
-    logAppEvent: vi.fn(async () => undefined),
-    notifyDisabledAttempt: vi.fn(async () => undefined),
   };
 });
 
@@ -114,11 +111,7 @@ class FakeHTMLRewriter {
   FakeHTMLRewriter;
 
 const env = {
-  SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-  SUPABASE_ANON_KEY: 'anon-key',
   SESSION_SECRET: 'test-session-secret',
-  TRACKER_URL: 'https://htmlradar.com/v1/tracker.js',
 } as unknown as import('../src/env.js').Env;
 
 const ctx = {
@@ -129,7 +122,7 @@ const ctx = {
 async function get(
   path: string,
   headers: Record<string, string> = {},
-  host = 'htmlradar.page',
+  host = 'docs.example',
 ): Promise<Response> {
   const worker = (await import('../src/index.js')).default;
   return worker.fetch(new Request(`https://${host}${path}`, { headers }), env, ctx);
@@ -139,7 +132,7 @@ const RID = '__Host-hr_rid';
 
 // One navigation, through the jar: send what the browser holds, store what
 // comes back.
-async function visit(jar: Jar, path: string, host = 'htmlradar.page'): Promise<Response> {
+async function visit(jar: Jar, path: string, host = 'docs.example'): Promise<Response> {
   return jar.take(await get(path, jar.header(), host));
 }
 
@@ -168,7 +161,7 @@ async function confirm(
   form.append('optout', optout);
   form.append('token', token);
   return worker.fetch(
-    new Request('https://htmlradar.page/r/acme-proposal', { method: 'POST', body: form, headers }),
+    new Request('https://docs.example/r/acme-proposal', { method: 'POST', body: form, headers }),
     env,
     ctx,
   );
@@ -430,28 +423,15 @@ describe('a forged confirmation', () => {
 });
 
 describe('routes that are not a read', () => {
-  it('mints nothing on the print route', async () => {
-    const wrapperEnv = { ...env, TRUST_WRAPPER: '*' } as typeof env;
-    const worker = (await import('../src/index.js')).default;
-    const wrapper = await worker.fetch(
-      new Request('https://htmlradar.page/r/acme-proposal'),
-      wrapperEnv,
-      ctx,
-    );
-    const html = await wrapper.text();
-    const printHref = /href="(\/r\/acme-proposal\/print\?g=[^"]+)"/.exec(html)![1]!;
-    const printCookie = wrapper.headers
-      .getSetCookie()
-      .find((c) => c.startsWith('__Host-hr_print='))!
-      .split(';')[0]!;
-
-    const res = await worker.fetch(
-      new Request(`https://htmlradar.page${printHref}`, { headers: { cookie: printCookie } }),
-      wrapperEnv,
-      ctx,
-    );
+  // A link preview is a machine fetching the card, not a person reading.
+  it('mints nothing for an unfurl bot', async () => {
+    const res = await get('/r/acme-proposal', {
+      'User-Agent': 'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+    });
     expect(ridCookie(res)).toBeNull();
-    expect(readerIdIn(await res.text())).toBeNull();
+    const html = await res.text();
+    expect(readerIdIn(html)).toBeNull();
+    expect(html).not.toContain('HTMLRadarConfig');
   });
 });
 

@@ -58,10 +58,7 @@ export class Session {
 
   constructor(opts: SessionOptions) {
     this.opts = opts;
-    this.transport = createTransport({
-      supabaseUrl: opts.config.supabaseUrl,
-      anonKey: opts.config.supabaseAnonKey,
-    });
+    this.transport = createTransport({ endpoint: opts.config.endpoint });
     this.sections = new SectionTracker({
       selector: opts.config.sections.selector,
       boundaryOffsetPx: opts.config.sections.boundaryOffsetPx,
@@ -358,7 +355,15 @@ export class Session {
   // human's, so an auto-advancing carousel would read as a reader.
   // Real human scrolling always arrives with wheel, touchstart or
   // keydown alongside it, and those renew the allowance.
-  private onScroll = (): void => {
+  private onScroll = (e: Event): void => {
+    // A scroll on an inner element (a deck whose slides scroll inside a
+    // 100vh `.deck` container, with the window itself never moving) makes
+    // that element the one depth is measured against, if it scrolls further
+    // than whatever was measured before.
+    const t = e.target;
+    if (t instanceof Element && scrollRange(t) > (this.scrollEl ? scrollRange(this.scrollEl) : 0)) {
+      this.scrollEl = t;
+    }
     if (this.rafScrollScheduled) return;
     this.rafScrollScheduled = true;
     requestAnimationFrame(() => {
@@ -407,8 +412,29 @@ export class Session {
     return unspent;
   }
 
+  // The element that scrolls instead of the window, on documents built that
+  // way (see onScroll and findScrollContainer). Null while the window is the
+  // scroller, which is the ordinary case.
+  private scrollEl: Element | null = null;
+  private scrollElSearched = false;
+
   private updateMaxScroll(): void {
     const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+    if (docHeight <= 0 && !this.scrollEl && !this.scrollElSearched) {
+      this.scrollElSearched = true;
+      this.scrollEl = findScrollContainer();
+    }
+    if (docHeight <= 0 && this.scrollEl) {
+      const range = scrollRange(this.scrollEl);
+      if (range > 0) {
+        const ratio = Math.max(0, Math.min(1, this.scrollEl.scrollTop / range));
+        if (ratio > this.maxScroll) {
+          this.maxScroll = ratio;
+          this.dirty = true;
+        }
+        return;
+      }
+    }
     if (docHeight <= 0) {
       // Single-viewport doc — they saw all of it.
       if (this.maxScroll < 1) {
@@ -475,4 +501,36 @@ export class Session {
       this.activeRunningSince = null;
     }
   }
+}
+
+/** How far an element can scroll vertically, in pixels. */
+function scrollRange(el: Element): number {
+  return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+/**
+ * On a document whose window does not scroll, the element that does: the
+ * largest vertically scrollable box that fills at least half the viewport.
+ * Decks built as a `100vh` scroll-snap container look exactly like this, and
+ * measuring depth against the window would report every one of them as fully
+ * read the moment it loads. Null when nothing qualifies — a genuinely
+ * single-screen document.
+ */
+export function findScrollContainer(root: ParentNode = document): Element | null {
+  const minHeight = (window.innerHeight || 0) / 2;
+  let best: Element | null = null;
+  let bestRange = 0;
+  const all = root.querySelectorAll('body *');
+  // Bounded: this runs once, and only on a document whose window did not scroll.
+  const limit = Math.min(all.length, 5000);
+  for (let i = 0; i < limit; i++) {
+    const el = all[i]!;
+    const range = scrollRange(el);
+    if (range <= bestRange || el.clientHeight < minHeight) continue;
+    const overflowY = getComputedStyle(el).overflowY;
+    if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') continue;
+    best = el;
+    bestRange = range;
+  }
+  return best;
 }

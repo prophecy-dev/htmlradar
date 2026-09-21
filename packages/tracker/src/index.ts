@@ -63,9 +63,7 @@ async function boot(): Promise<void> {
   if (!config) {
     if (typeof console !== 'undefined') {
       // eslint-disable-next-line no-console
-      console.warn(
-        '[HTMLRadar] missing required config (supabaseUrl, supabaseAnonKey, shareSlug). Tracker disabled.',
-      );
+      console.warn('[HTMLRadar] missing required config (endpoint, shareSlug). Tracker disabled.');
     }
     return;
   }
@@ -99,10 +97,7 @@ async function boot(): Promise<void> {
       // successful submission already has a live session by the time the
       // gate closes. Session then installs the pre-started result instead
       // of calling start_session a second time.
-      const transport = createTransport({
-        supabaseUrl: config.supabaseUrl,
-        anonKey: config.supabaseAnonKey,
-      });
+      const transport = createTransport({ endpoint: config.endpoint });
       email = await showEmailGate(config, async (candidate) => {
         try {
           preStarted = await transport.startSession({

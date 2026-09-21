@@ -61,19 +61,16 @@ const doc = {
 
 const getShareBySlug = vi.fn();
 
-vi.mock('../src/supabase.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/supabase.js')>('../src/supabase.js');
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
   return {
     ...actual,
     getShareBySlug: (...args: unknown[]) => getShareBySlug(...args),
     // No hostname is a claimed customer domain unless a test says so. Real
     // network calls must never happen here, and resolveHost reads
     // custom_domains for every host that is not the apex or a handle.
-    getCustomDomainByHostname: vi.fn(async () => null),
     getDocument: vi.fn(async () => doc),
     listAttachmentsForDocument: vi.fn(async () => []),
-    logAppEvent: vi.fn(async () => undefined),
-    notifyDisabledAttempt: vi.fn(async () => undefined),
   };
 });
 
@@ -117,11 +114,7 @@ class FakeHTMLRewriter {
   FakeHTMLRewriter;
 
 const env = {
-  SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-  SUPABASE_ANON_KEY: 'anon-key',
   SESSION_SECRET: 'test-session-secret',
-  TRACKER_URL: 'https://htmlradar.com/v1/tracker.js',
 } as unknown as import('../src/env.js').Env;
 
 const ctx = {
@@ -131,7 +124,7 @@ const ctx = {
 
 async function get(path: string, headers: Record<string, string> = {}): Promise<Response> {
   const worker = (await import('../src/index.js')).default;
-  return worker.fetch(new Request(`https://htmlradar.page${path}`, { headers }), env, ctx);
+  return worker.fetch(new Request(`https://docs.example${path}`, { headers }), env, ctx);
 }
 
 async function post(
@@ -143,7 +136,7 @@ async function post(
   const form = new FormData();
   for (const [k, v] of Object.entries(body)) form.append(k, v);
   return worker.fetch(
-    new Request(`https://htmlradar.page${path}`, { method: 'POST', body: form, headers }),
+    new Request(`https://docs.example${path}`, { method: 'POST', body: form, headers }),
     env,
     ctx,
   );
@@ -166,7 +159,7 @@ function preferenceCookies(res: Response): string[] {
     .filter((c) => c.startsWith('__Host-hr_optout=') || c.startsWith('__Host-hr_rid='));
 }
 
-const CONFIRM_OFF = 'Turn off read tracking for HTMLRadar links in this browser?';
+const CONFIRM_OFF = 'Turn off read tracking for links on this site in this browser?';
 const CONFIRM_ON = 'Turn read tracking back on?';
 
 // Relative on purpose: the tracker is served from the document's own host, so
@@ -242,7 +235,7 @@ describe('recipient opt-out', () => {
     const stale = await issueOptOutToken(
       '1',
       'acme-proposal',
-      'htmlradar.page',
+      'docs.example',
       challenge,
       env.SESSION_SECRET,
     );
@@ -317,9 +310,9 @@ describe('recipient opt-out', () => {
     );
   });
 
-  it('free-tier badge carries no opt-out link or state', async () => {
+  it('the tracked pill carries no opt-out link or state', async () => {
     const html = await (await get('/r/acme-proposal')).text();
-    expect(html).toContain('Powered by');
+    expect(html).toContain('This link is tracked');
     expect(html).not.toContain('Opt out');
     expect(html).not.toContain('Read tracking is off');
   });

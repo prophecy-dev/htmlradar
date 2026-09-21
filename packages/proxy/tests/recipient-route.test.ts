@@ -46,8 +46,8 @@ const doc = {
 
 const getShareBySlug = vi.fn();
 
-vi.mock('../src/supabase.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/supabase.js')>('../src/supabase.js');
+vi.mock('../src/store.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/store.js')>('../src/store.js');
   return {
     ...actual,
     getShareBySlug: (...args: unknown[]) => getShareBySlug(...args),

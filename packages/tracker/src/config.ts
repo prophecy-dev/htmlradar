@@ -26,14 +26,13 @@ type DeepPartial<T> = T extends (...args: never[]) => unknown
 declare global {
   interface Window {
     HTMLRadarConfig?: DeepPartial<TrackerConfig> & {
-      supabaseUrl?: string;
-      supabaseAnonKey?: string;
+      endpoint?: string;
       shareSlug?: string;
     };
   }
 }
 
-const DEFAULTS: Omit<TrackerConfig, 'supabaseUrl' | 'supabaseAnonKey' | 'shareSlug'> = {
+const DEFAULTS: Omit<TrackerConfig, 'endpoint' | 'shareSlug'> = {
   sections: {
     // Default is the broadest heading selector. The discover step
     // auto-slugs missing IDs from the heading text, and a fallback
@@ -69,17 +68,17 @@ export function resolveConfig(scriptEl: HTMLScriptElement | null): TrackerConfig
   const fromAttrs = scriptEl ? readScriptAttrs(scriptEl) : {};
   const fromRuntime = window.HTMLRadarConfig ?? {};
 
-  const supabaseUrl = fromRuntime.supabaseUrl ?? fromAttrs.supabaseUrl;
-  const supabaseAnonKey = fromRuntime.supabaseAnonKey ?? fromAttrs.supabaseAnonKey;
+  // Where to report. Explicit when given; otherwise the origin the script
+  // itself was loaded from, which for a proxy-served document is the proxy.
+  const endpoint = fromRuntime.endpoint ?? fromAttrs.endpoint ?? scriptOrigin(scriptEl);
   const shareSlug = fromRuntime.shareSlug ?? fromAttrs.shareSlug;
 
-  if (!supabaseUrl || !supabaseAnonKey || !shareSlug) {
+  if (!endpoint || !shareSlug) {
     return null;
   }
 
   const config: TrackerConfig = {
-    supabaseUrl,
-    supabaseAnonKey,
+    endpoint,
     shareSlug,
     sections: { ...DEFAULTS.sections, ...(fromRuntime.sections ?? {}) },
     session: { ...DEFAULTS.session, ...(fromRuntime.session ?? {}) },
@@ -100,15 +99,23 @@ export function resolveConfig(scriptEl: HTMLScriptElement | null): TrackerConfig
 }
 
 interface ScriptAttrs {
-  supabaseUrl?: string;
-  supabaseAnonKey?: string;
+  endpoint?: string;
   shareSlug?: string;
+}
+
+function scriptOrigin(el: HTMLScriptElement | null): string | undefined {
+  if (!el?.src) return undefined;
+  try {
+    const origin = new URL(el.src, window.location.href).origin;
+    return origin && origin !== 'null' ? origin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function readScriptAttrs(el: HTMLScriptElement): ScriptAttrs {
   const out: ScriptAttrs = {};
-  if (el.dataset['supabaseUrl']) out.supabaseUrl = el.dataset['supabaseUrl'];
-  if (el.dataset['supabaseAnonKey']) out.supabaseAnonKey = el.dataset['supabaseAnonKey'];
+  if (el.dataset['endpoint']) out.endpoint = el.dataset['endpoint'];
   if (el.dataset['shareSlug']) out.shareSlug = el.dataset['shareSlug'];
   return out;
 }
