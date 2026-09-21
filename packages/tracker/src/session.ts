@@ -96,7 +96,15 @@ export class Session {
     }
 
     if (!document.hidden) {
-      this.activeRunningSince = performance.now();
+      const now = performance.now();
+      // Start the idle window here, not at construction. `lastActivityMs`
+      // is stamped in its field initialiser, and the warm-up above waits
+      // exactly IDLE_THRESHOLD_MS — so without this the clock began
+      // already past its own deadline and credited nothing until the
+      // reader's first event. sections-v2 stamps its watchdog in start()
+      // for the same reason; now both agree on when a session begins.
+      this.lastActivityMs = now;
+      this.activeRunningSince = now;
     }
     this.bindListeners();
     this.sections.start();
@@ -207,11 +215,20 @@ export class Session {
     this.boundCount = 1;
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener('pagehide', this.onPageHide);
-    window.addEventListener('scroll', this.onScroll, { passive: true });
-    // Activity watchdog inputs. Same events sections-v2 listens to.
-    // No mousemove (too noisy; doesn't reliably imply attention).
+    // Capture, not bubble: a scroll event on an inner scroll container does
+    // not bubble, so a bubble-phase window listener never sees a document
+    // that scrolls a panel instead of the page. Capture runs from the
+    // window down and catches both.
+    window.addEventListener('scroll', this.onScroll, { passive: true, capture: true });
+    // Activity watchdog inputs. Same events sections-v2 listens to, plus a
+    // throttled mousemove: a reader holding still on a page that does not
+    // scroll emits nothing else, and every comparable product counts
+    // ordinary mouse use as presence.
     window.addEventListener('keydown', this.onActivity, { passive: true });
     window.addEventListener('touchstart', this.onActivity, { passive: true });
+    window.addEventListener('mousedown', this.onActivity, { passive: true });
+    window.addEventListener('wheel', this.onActivity, { passive: true });
+    window.addEventListener('mousemove', this.onMouseMove, { passive: true });
     // scroll already bumps activity via onScroll → onActivity below.
   }
 
@@ -220,9 +237,12 @@ export class Session {
     this.boundCount = 0;
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.removeEventListener('pagehide', this.onPageHide);
-    window.removeEventListener('scroll', this.onScroll);
+    window.removeEventListener('scroll', this.onScroll, { capture: true });
     window.removeEventListener('keydown', this.onActivity);
     window.removeEventListener('touchstart', this.onActivity);
+    window.removeEventListener('mousedown', this.onActivity);
+    window.removeEventListener('wheel', this.onActivity);
+    window.removeEventListener('mousemove', this.onMouseMove);
   }
 
   private onVisibility = (): void => {
@@ -265,6 +285,17 @@ export class Session {
   // Also resumes accumulation if we were idle-paused and the tab is
   // currently visible — first interaction after going idle starts
   // counting again immediately.
+  // mousemove fires per pixel of travel; one bump a second is all the 5s
+  // watchdog can use, so the other few hundred are dropped before they
+  // touch anything.
+  private lastMoveBumpMs = 0;
+  private onMouseMove = (): void => {
+    const now = performance.now();
+    if (now - this.lastMoveBumpMs < 1_000) return;
+    this.lastMoveBumpMs = now;
+    this.onActivity();
+  };
+
   private onActivity = (): void => {
     const now = performance.now();
     this.lastActivityMs = now;
