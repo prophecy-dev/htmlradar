@@ -587,6 +587,53 @@ jobs:
           purge_zone htmlradar.com "$CF_ZONE_ID"
           purge_zone htmlradar.page "$CF_ZONE_ID_PAGE"
 
+      # The tracker's versioned address must end up PINNED, and nothing else
+      # notices if it never does.
+      #
+      # Documents point at /v1/tracker.<hash>.js, where the hash is the
+      # bundle's own (packages/proxy/scripts/tracker-version.mjs). The worker
+      # hashes what it fetched from the application domain and answers
+      # `immutable` only when those bytes really are that version — so a
+      # mismatch is safe, but silent: the address would simply never be
+      # cacheable, every reader would re-fetch the script forever, and the
+      # protection this whole design buys would be switched off with no error
+      # anywhere. This step is the alarm.
+      #
+      # After the purge, because before it our own edge cache can still hold
+      # the previous script, which is exactly the mismatch that must NOT be
+      # pinned. The version is read from the file wrangler regenerated during
+      # the proxy deploy above, so it follows the deploy rather than being
+      # edited alongside it.
+      - name: Verify the versioned tracker address is pinned
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.preview_only) }}
+        run: |
+          set -e
+          version=$(sed -n "s/^export const TRACKER_VERSION = '\([a-f0-9]\{12\}\)';$/\1/p" \
+            packages/proxy/src/tracker-version.ts | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read TRACKER_VERSION from packages/proxy/src/tracker-version.ts."
+            exit 1
+          fi
+          url="https://htmlradar.page/v1/tracker.${version}.js"
+          echo "Checking $url"
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            headers=$(curl -sS -o /dev/null -D - "$url" || true)
+            cache=$(echo "$headers" | tr -d '\r' | sed -n 's/^[Cc]ache-[Cc]ontrol: //p' | head -1)
+            served=$(echo "$headers" | tr -d '\r' | sed -n 's/^[Xx]-[Hh][Tt][Mm][Ll][Rr]adar-[Tt]racker-[Vv]ersion: //p' | head -1)
+            if echo "$cache" | grep -q immutable; then
+              echo "Pinned: $url is $cache (served version ${served:-unknown})."
+              break
+            fi
+            if [ "$attempt" -ge 4 ]; then
+              echo "::error::$url answered '${cache:-no Cache-Control}' and served version '${served:-unknown}', not the expected immutable for ${version}. The application domain is serving a different tracker than the Worker was built against, so the versioned address can never be cached."
+              exit 1
+            fi
+            echo "::warning::Attempt ${attempt}: '${cache:-no Cache-Control}' (served '${served:-unknown}') — waiting 30s for the application domain to settle."
+            sleep 30
+          done
+
       # What a recipient holding an old link actually gets, read after the
       # purge so no cached answer can flatter it, and on a real share rather
       # than a made-up slug that would miss the cache anyway.

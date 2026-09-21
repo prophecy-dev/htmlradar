@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRACKER_VERSION } from '../src/tracker-version.js';
 
 // Which host the worker was asked on decides what it does.
 //
@@ -225,6 +227,95 @@ describe('the share host is not a website', () => {
     upstream.mockRestore();
   });
 
+  // The 21 September 2026 defect. A customer's domain can sit behind the
+  // CUSTOMER's cache, which no deploy of ours purges, so the one fixed address
+  // kept handing readers a four-hour-old script after the page configuration
+  // had moved on. The address now carries the bundle's own hash, so new bytes
+  // are an address nothing has cached — and every other address stays alive,
+  // serving the current script on a lifetime short enough to heal itself.
+  describe("the tracker's address changes when its bytes do", () => {
+    // The real bundle the application serves, which is what TRACKER_VERSION is
+    // the hash of. Using the actual bytes is the point: the worker pins a
+    // response only after hashing it, so a stub that merely looked like a
+    // tracker would prove nothing.
+    const CURRENT = readFileSync(new URL('../../app/public/v1/tracker.js', import.meta.url));
+    const serveTracker = (body: string | Uint8Array = CURRENT, status = 200) =>
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status }));
+
+    it('points the served document at the versioned address', async () => {
+      const injected = (await import('../src/inject.js')).injectTracker as unknown as ReturnType<
+        typeof vi.fn
+      >;
+      await fetchAs('https://htmlradar.page/r/acme-proposal');
+      const { trackerUrl } = injected.mock.calls[0]![1] as { trackerUrl: string };
+      expect(trackerUrl).toBe(`/v1/tracker.${TRACKER_VERSION}.js`);
+      // Relative, so it is fetched from whichever host served the document.
+      expect(trackerUrl.startsWith('/')).toBe(true);
+    });
+
+    it('pins the bytes forever once it has hashed them and they are that version', async () => {
+      const upstream = serveTracker();
+      const res = await fetchAs(`https://htmlradar.page/v1/tracker.${TRACKER_VERSION}.js`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(CURRENT.toString());
+      expect(upstream).toHaveBeenCalledWith('https://htmlradar.com/v1/tracker.js');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+      expect(res.headers.get('X-HTMLRadar-Tracker-Version')).toBe(TRACKER_VERSION);
+      upstream.mockRestore();
+    });
+
+    it('refuses to pin bytes that are not the version the address asked for', async () => {
+      // The window between deploying this worker and the application serving
+      // the matching script — our own edge cache is purged later still. Pinning
+      // here would make the stale script permanent for that reader, which is
+      // today's defect with no way back. It is served, and it is not pinned.
+      const upstream = serveTracker('/* the PREVIOUS tracker, still cached upstream */');
+      const res = await fetchAs(`https://htmlradar.page/v1/tracker.${TRACKER_VERSION}.js`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('/* the PREVIOUS tracker, still cached upstream */');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, must-revalidate');
+      // And it says what it really served, rather than what was asked for.
+      expect(res.headers.get('X-HTMLRadar-Tracker-Version')).not.toBe(TRACKER_VERSION);
+      upstream.mockRestore();
+    });
+
+    it("answers an older deploy's address with the current script, not a 404", async () => {
+      // A document a browser already holds, or a request in flight across a
+      // deploy. Losing tracking would be worse than a redundant fetch.
+      const upstream = serveTracker();
+      const res = await fetchAs('https://htmlradar.page/v1/tracker.0123456789ab.js');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(CURRENT.toString());
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, must-revalidate');
+      expect(res.headers.get('X-HTMLRadar-Tracker-Version')).toBe(TRACKER_VERSION);
+      upstream.mockRestore();
+    });
+
+    it('keeps the fixed address alive on a short lifetime, for direct embeds', async () => {
+      const upstream = serveTracker();
+      const res = await fetchAs('https://htmlradar.page/v1/tracker.js');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(CURRENT.toString());
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, must-revalidate');
+      upstream.mockRestore();
+    });
+
+    it('never pins a failed fetch, whatever address asked for it', async () => {
+      const upstream = serveTracker('upstream down', 502);
+      const res = await fetchAs(`https://htmlradar.page/v1/tracker.${TRACKER_VERSION}.js`);
+      expect(res.status).toBe(502);
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, must-revalidate');
+      expect(res.headers.get('X-HTMLRadar-Tracker-Version')).toBeNull();
+      upstream.mockRestore();
+    });
+
+    it('is not a wildcard: only the tracker filename is answered', async () => {
+      for (const path of ['/v1/tracker.js.map', '/v1/tracker..js', '/v1/anything.abc.js']) {
+        expect((await fetchAs(`https://htmlradar.page${path}`)).status, path).toBe(404);
+      }
+    });
+  });
+
   it('serves a share', async () => {
     const res = await fetchAs('https://htmlradar.page/r/acme-proposal');
     expect(res.status).toBe(200);
@@ -298,6 +389,20 @@ describe('an empty legacy list turns the redirect off', () => {
   it('serves the share host at the same time, so one link opens on either', async () => {
     const res = await fetchAs('https://htmlradar.page/r/acme-proposal', {}, noRedirect);
     expect(res.status).toBe(200);
+  });
+
+  it('keeps the FIXED tracker address on the application domain', async () => {
+    // The one host where /v1/ is not this worker's: only /r/* is routed here
+    // on htmlradar.com, so /v1/ is answered by Cloudflare Pages, which has the
+    // fixed address and no other. A versioned address there would 404 and the
+    // document would load no tracker at all.
+    const injected = (await import('../src/inject.js')).injectTracker as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    await fetchAs('https://htmlradar.com/r/acme-proposal', {}, noRedirect);
+    expect((injected.mock.calls[0]![1] as { trackerUrl: string }).trackerUrl).toBe(
+      '/v1/tracker.js',
+    );
   });
 
   it('sends no Location at all, query string included', async () => {

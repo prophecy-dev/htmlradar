@@ -45,6 +45,9 @@ export function config(source = process.env) {
   const trim = (value) => (value ?? '').replace(/\/+$/, '');
   return {
     baseUrl: trim(source.BASE_URL) || 'https://htmlradar.com',
+    // The content domain: where a link without a custom domain is served, and
+    // the reference copy of the tracker for the skew check below.
+    shareBase: trim(source.SHARE_BASE) || 'https://htmlradar.page',
     supabaseUrl: trim(source.SUPABASE_URL),
     serviceKey: source.SUPABASE_SERVICE_ROLE_KEY ?? '',
     apiKey: source.HTMLRADAR_API_KEY ?? '',
@@ -371,6 +374,7 @@ export async function customHostStep(cfg) {
       throw new Error(`${share.url} returned 200 but not the document — title missing from body`);
     }
     notes.push(`${domain.hostname} served the document`);
+    notes.push(await trackerSkew(body, domain.hostname, cfg.shareBase));
   } finally {
     try {
       await api(cfg, 'POST', `/api/v1/shares/${share.share_id}/revoke`, {});
@@ -380,6 +384,52 @@ export async function customHostStep(cfg) {
     }
   }
   return notes.join('; ');
+}
+
+/**
+ * The same tracker address, fetched on the customer's host and on the content
+ * domain, compared byte for byte.
+ *
+ * The failure this catches happened on 21 September 2026. A customer's own
+ * domain can sit behind the CUSTOMER's cache, which our deploys cannot purge:
+ * htmlradar.page served the new 24,278-byte tracker while decks.draconic.ai
+ * kept serving the previous 23,095-byte one for hours, and on that domain a
+ * reader who spent 35 seconds was recorded as 0, because the stale script did
+ * not read the new page configuration. Nothing noticed. This is what notices.
+ *
+ * The address is read out of the document itself rather than assumed, so it
+ * checks whatever the worker actually pointed this reader at. Two things are
+ * asked of it: that the version the worker says it served is the version the
+ * document asked for, and that both hosts answer the same address with the
+ * same bytes.
+ */
+export async function trackerSkew(body, hostname, shareBase) {
+  const src = /<script src="(\/v1\/tracker[^"]*\.js)"/.exec(body)?.[1];
+  if (!src) throw new Error(`${hostname} served the document with no tracker script tag`);
+  const read = async (base) => {
+    const res = await fetch(`${base}${src}`);
+    if (!res.ok) throw new Error(`${base}${src} returned ${res.status}`);
+    // The worker hashes what it served and says so here, so this asks the one
+    // question that matters — is this the script the page asked for? — of the
+    // host the reader actually fetched from.
+    return { body: await res.text(), served: res.headers.get('x-htmlradar-tracker-version') };
+  };
+  const [here, reference] = await Promise.all([read(`https://${hostname}`), read(shareBase)]);
+  const referenceHost = new URL(shareBase).host;
+  const asked = /\/v1\/tracker\.([a-f0-9]+)\.js$/.exec(src)?.[1];
+  if (asked && here.served && here.served !== asked) {
+    throw new Error(
+      `${hostname}${src} served version ${here.served}, not the ${asked} the document asked for — ` +
+        'a cache between us and the reader is serving a stale tracker',
+    );
+  }
+  if (here.body !== reference.body) {
+    throw new Error(
+      `${hostname}${src} is ${here.body.length} bytes but ${referenceHost}${src} is ` +
+        `${reference.body.length} — a cache between us and the reader is serving a stale tracker`,
+    );
+  }
+  return `tracker ${src} identical on ${hostname} and ${referenceHost} (${here.body.length} bytes)`;
 }
 
 /**

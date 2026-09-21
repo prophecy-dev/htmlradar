@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRACKER_VERSION } from '../src/tracker-version.js';
 
 // A customer's own domain, and which host may serve which share once one
 // exists.
@@ -375,6 +377,23 @@ describe('a custom share is served on its own hostname', () => {
     upstream.mockRestore();
   });
 
+  it('serves the versioned tracker address there too, on a year-long lifetime', async () => {
+    // A customer's domain is the whole reason the address carries a version:
+    // it can sit behind the CUSTOMER's cache, which no deploy of ours purges.
+    // Same worker, same upstream, same immutable answer as the share host.
+    // The real bundle: the worker hashes what it fetched and pins it only when
+    // those bytes are the version in the address.
+    const bundle = readFileSync(new URL('../../app/public/v1/tracker.js', import.meta.url));
+    const upstream = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(bundle, { status: 200 }));
+    const res = await fetchAs(`https://${LIVE.hostname}/v1/tracker.${TRACKER_VERSION}.js`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(bundle.toString());
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+    upstream.mockRestore();
+  });
+
   it('records a read there, because the tracker posts to Supabase and not to us', async () => {
     // The recorded read is the tracker's own call to Supabase from the
     // document; the worker's part is handing the document the anon key and
@@ -392,7 +411,10 @@ describe('a custom share is served on its own hostname', () => {
       share: { id: string };
     };
     expect(config.trackingEnabled).toBe(true);
-    expect(config.trackerUrl).toBe('/v1/tracker.js');
+    // Relative and versioned, exactly as on the share host: the document's own
+    // host answers it, so nothing crosses an origin, and the version segment
+    // means the customer's own cache cannot hand this page an old script.
+    expect(config.trackerUrl).toBe(`/v1/tracker.${TRACKER_VERSION}.js`);
     expect(config.share.id).toBe('share-1');
   });
 });

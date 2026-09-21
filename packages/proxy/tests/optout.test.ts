@@ -169,9 +169,12 @@ function preferenceCookies(res: Response): string[] {
 const CONFIRM_OFF = 'Turn off read tracking for HTMLRadar links in this browser?';
 const CONFIRM_ON = 'Turn read tracking back on?';
 
-// Relative on purpose: the tracker is served from the document's own host,
-// so it is first-party to the document (see TRACKER_PATH in src/index.ts).
-const TRACKER_TAG = 'src="/v1/tracker.js"';
+// Relative on purpose: the tracker is served from the document's own host, so
+// it is first-party to the document. Versioned, so a cache anywhere between us
+// and the reader cannot answer a new document with an old script (see
+// TRACKER_PATH and TRACKER_VERSIONED_PATH in src/index.ts). The prefix alone is
+// matched, so "no tracker at all" stays a real assertion when the hash moves.
+const TRACKER_TAG = 'src="/v1/tracker';
 
 function expectSandboxed(res: Response): void {
   const csp = res.headers.get('Content-Security-Policy') ?? '';
@@ -289,6 +292,19 @@ describe('recipient opt-out', () => {
     // which is why this names the opt-out cookie rather than asserting that
     // the response sets nothing at all.
     expect(res.headers.getSetCookie().filter((c) => c.startsWith('__Host-hr_optout='))).toEqual([]);
+  });
+
+  it('injects it at its versioned address, and the policy does not move for it', async () => {
+    // Moving the tracker to a content-derived address (21 September 2026) cost
+    // the sandbox nothing: the tag is relative and same-origin, so there is no
+    // new origin to allow, and no inline script was added — the one inline
+    // script is the configuration handoff that was always there.
+    const res = await get('/r/acme-proposal');
+    const html = await res.text();
+    expect(html).toMatch(/<script src="\/v1\/tracker\.[a-f0-9]{12}\.js"/);
+    expect(html.match(/<script(?! src=")/g)?.length ?? 0).toBe(1);
+    expectSandboxed(res);
+    expect(res.headers.get('Content-Security-Policy')).not.toContain('script-src');
   });
 
   it('clears the cookie on the confirming POST for ?optout=0', async () => {

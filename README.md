@@ -288,6 +288,12 @@ Local URLs after `pnpm dev`:
 
 Tracker bundle size budget: ≤14 KB gzipped. Build will warn if you cross it.
 
+Embedding the tracker by hand in your own page? Use the fixed address, `/v1/tracker.js`. It serves
+the current script and always will, on a five-minute cache lifetime. Documents HTMLRadar serves are
+pointed at a versioned address instead (`/v1/tracker.<hash>.js`, the hash being the bundle's own),
+so that a cache between us and the reader can never answer a freshly served page with a stale
+script — see [`docs/self-hosting.md`](./docs/self-hosting.md#dns).
+
 ---
 
 ## Contributing

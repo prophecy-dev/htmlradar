@@ -21,6 +21,7 @@
 //   GET  /r/{slug}/m/{att_id} downloads a supporting-material attachment
 //   GET  /r/_doc/{doc_id}     sender-side raw-doc preview (HMAC-gated)
 //   GET  /v1/tracker.js       the tracker, first-party to the document
+//   GET  /v1/tracker.{v}.js   the same tracker at its content-derived address
 //   GET  /robots.txt          Disallow: / — no host this worker serves is a website
 //   GET  /.well-known/htmlradar-domain-check
 //                             which claim a hostname belongs to, and the only
@@ -106,6 +107,7 @@ import {
 } from './auth.js';
 import { fetchDocumentHtml } from './fetch-html.js';
 import { geoFromRequest, injectTracker } from './inject.js';
+import { TRACKER_VERSION } from './tracker-version.js';
 import { documentCsp, wrapperPage, FRAME_SANDBOX, OWN_PAGE_HEADER } from './wrapper.js';
 import {
   emailGateForm,
@@ -130,12 +132,68 @@ const LEGACY_HOSTS_DEFAULT = 'htmlradar.com';
 
 const shareHostOf = (env: Env): string => env.SHARE_HOST ?? SHARE_HOST_DEFAULT;
 
-// Where the injected <script> points, and the path this worker answers it on.
+// Where the injected <script> points, and the paths this worker answers it on.
 // Relative, so the tracker is always first-party to the document that loads
 // it: same host, no second DNS lookup, and nothing for a third-party script
 // blocker to recognise. env.TRACKER_URL is the upstream this worker fetches
-// it from (Cloudflare Pages, on the application domain).
+// it from (Cloudflare Pages, on the application domain) — one upstream for
+// every address below, so the bytes served are always the current ones.
+//
+// TWO ADDRESSES, AND THE DIFFERENCE IS THE CACHE.
+//
+// The fixed address is what self-hosters embed by hand and what pages opened
+// before a deploy already hold. It keeps working forever, on a five-minute
+// lifetime so a stale copy can never live long.
+//
+// The versioned address is what every document we serve points at. Its
+// version segment is the tracker bundle's own hash (see
+// scripts/tracker-version.mjs), so it changes exactly when the script's bytes
+// change. That is the fix for the 21 September 2026 defect: a customer domain
+// behind the CUSTOMER's cache — one we cannot purge — kept handing readers a
+// four-hour-old script while the new page configuration expected the new one,
+// and a silent reader recorded 0 seconds. A new address is an address no cache
+// holds yet, so version skew between page and script cannot happen. Because
+// its contents can never change, it is cached for a year, immutably — but
+// only once the worker has hashed what it fetched and confirmed those bytes
+// really are that version (see the route below).
+//
+// A version segment we do not recognise — an older deploy's address in a
+// document a browser is still holding, or a request in flight across a deploy
+// — serves the CURRENT script rather than 404ing, because losing tracking is
+// worse than a redundant fetch. Short lifetime, so nothing pins it.
 const TRACKER_PATH = '/v1/tracker.js';
+const TRACKER_VERSIONED_PATH = `/v1/tracker.${TRACKER_VERSION}.js`;
+const TRACKER_PATH_RE = /^\/v1\/tracker(?:\.([a-z0-9]+))?\.js$/;
+
+/**
+ * Which address a document served on this hostname points at.
+ *
+ * The versioned one everywhere this worker owns the whole hostname — the share
+ * host, handle hosts and customers' own domains, which is exactly where a
+ * cache we cannot purge sits. The ONE exception is the application domain
+ * itself: only /r/* is routed to this worker there, so /v1/ is answered by
+ * Cloudflare Pages from the fixed address and nothing else resolves. Reading
+ * it off TRACKER_URL rather than naming htmlradar.com keeps a self-hoster's
+ * single-domain install correct too.
+ *
+ * Relative either way, so the tracker stays first-party to the document and
+ * nothing crosses an origin.
+ */
+// The version of the bytes actually served, on every tracker response. The
+// daily live journey reads it to prove the script a document points at is the
+// script it got (packages/app/scripts/live-journey.mjs).
+const TRACKER_VERSION_HEADER = 'X-HTMLRadar-Tracker-Version';
+
+/** The version segment, computed the same way scripts/tracker-version.mjs does. */
+async function sha256Prefix(bytes: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest.subarray(0, 6)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function trackerPathFor(hostname: string, env: Env): string {
+  const appHost = new URL(env.TRACKER_URL).hostname.toLowerCase();
+  return hostname.toLowerCase() === appHost ? TRACKER_PATH : TRACKER_VERSIONED_PATH;
+}
 
 const isLocal = (hostname: string): boolean =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
@@ -534,8 +592,47 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // never been a route on any host and falls through to the same 404.
   if (host.kind === 'claim') return notFound();
 
-  if (url.pathname === TRACKER_PATH) {
-    return fetch(env.TRACKER_URL);
+  const trackerMatch = TRACKER_PATH_RE.exec(url.pathname);
+  if (trackerMatch) {
+    const upstream = await fetch(env.TRACKER_URL);
+    const body = upstream.ok ? await upstream.arrayBuffer() : null;
+    const headers = new Headers(upstream.headers);
+    // Buffered above, so the length the upstream declared and any encoding it
+    // applied no longer describe what leaves here. The runtime sets both.
+    headers.delete('Content-Length');
+    headers.delete('Content-Encoding');
+
+    // NEVER PIN BYTES YOU HAVE NOT VERIFIED.
+    //
+    // A year and `immutable` is a promise that these exact bytes belong at
+    // this exact address, and a browser that accepts it will not ask again —
+    // neither will a customer's cache, which we cannot purge. So the promise
+    // is made about the bytes in hand, not about the address that asked for
+    // them: the response is hashed and pinned only when its own hash is the
+    // version in the address.
+    //
+    // The hole this closes is not hypothetical. The worker and the
+    // application deploy in separate steps, and our own edge cache is purged
+    // in a later one still (deploy.yml, "Purge Cloudflare edge cache"). For
+    // the seconds or minutes in between, a request to this deploy's versioned
+    // address can be answered by the PREVIOUS script — and pinning that would
+    // have made today's defect permanent for that reader, unfixable until the
+    // script changed again.
+    //
+    // Anything unverified still serves, on the five-minute lifetime: a reader
+    // who arrives early gets a working script and the right one within
+    // minutes, and the correct bytes are pinned the moment they exist.
+    const served = body ? await sha256Prefix(body) : null;
+    const verified = served !== null && served === trackerMatch[1];
+    headers.set(
+      'Cache-Control',
+      verified ? 'public, max-age=31536000, immutable' : 'public, max-age=300, must-revalidate',
+    );
+    // What the bytes really are, for the daily journey and for anyone reading
+    // a response by hand. It is the answer to "is this the script the page
+    // asked for?", which no other header on this response can be asked.
+    if (served) headers.set(TRACKER_VERSION_HEADER, served);
+    return new Response(body, { status: upstream.status, headers });
   }
 
   // Sender's "Preview document" — minted by /docs/[id] in the app when
@@ -912,7 +1009,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // a print address that carried a viewer's identity would be a worse thing
     // to leave in a browser's history.
     trackingEnabled,
-    trackerUrl: TRACKER_PATH,
+    trackerUrl: trackerPathFor(url.hostname, env),
     supabaseUrl: env.SUPABASE_URL,
     supabaseAnonKey: env.SUPABASE_ANON_KEY,
     ...(verifiedEmail ? { email: verifiedEmail } : {}),

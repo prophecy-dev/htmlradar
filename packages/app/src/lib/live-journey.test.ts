@@ -24,6 +24,7 @@ const { signInStep, cleanupStep, customHostStep, runJourney, parseForm } = await
 
 const cfg = {
   baseUrl: 'https://htmlradar.com',
+  shareBase: 'https://htmlradar.page',
   supabaseUrl: 'https://project.supabase.co',
   serviceKey: 'service-key',
   apiKey: 'hr_live_test',
@@ -356,8 +357,27 @@ describe('cleanupStep', () => {
 describe('customHostStep', () => {
   const HOSTNAME = 'decks.gethtmlradar.com';
 
-  /** PostgREST answers the owner and domain lookups; the API answers `url`. */
-  function stubCustomHost(domains: unknown[], url: string) {
+  // The shape of the address the proxy injects: relative, and versioned with
+  // the tracker bundle's own hash (packages/proxy/src/tracker-version.ts). The
+  // step reads it out of the document, so any hash stands in for a real one.
+  const TRACKER_SRC = '/v1/tracker.abc123def456.js';
+
+  // The version segment of that address, which the worker echoes back on the
+  // script it actually served.
+  const TRACKER_HASH = 'abc123def456';
+
+  /**
+   * PostgREST answers the owner and domain lookups; the API answers `url`.
+   * `trackers` maps a hostname to the tracker bytes it serves, and `versions`
+   * to the version the worker reports having served there — the two ways a
+   * stale script shows up.
+   */
+  function stubCustomHost(
+    domains: unknown[],
+    url: string,
+    trackers: Record<string, string> = {},
+    versions: Record<string, string> = {},
+  ) {
     const calls: string[] = [];
     // The served page echoes the title the step actually created, so the
     // "200 but not the document" branch stays a real assertion rather than
@@ -378,8 +398,27 @@ describe('customHostStep', () => {
         return body({ share_id: 'share-1', url });
       }
       if (target.includes('/revoke')) return body({ ok: true });
-      // The recipient fetch of the link itself.
-      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(served) });
+      if (target.includes('/v1/tracker')) {
+        const host = new URL(target).host;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === 'x-htmlradar-tracker-version'
+                ? (versions[host] ?? TRACKER_HASH)
+                : null,
+          },
+          text: () => Promise.resolve(trackers[host] ?? '/* tracker */'),
+        });
+      }
+      // The recipient fetch of the link itself, carrying the script tag the
+      // proxy injects into every served document.
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(`${served}<script src="${TRACKER_SRC}" defer></script>`),
+      });
     });
     return calls;
   }
@@ -395,6 +434,38 @@ describe('customHostStep', () => {
     expect(calls[1]).toContain('state=eq.live');
     expect(calls[2]).toContain('POST https://htmlradar.com/api/v1/shares');
     expect(calls.at(-1)).toContain('/api/v1/shares/share-1/revoke');
+  });
+
+  // The 21 September 2026 defect, which every check we had answered 200 to: a
+  // customer's own cache kept serving the previous tracker for hours after a
+  // deploy, so readers on that domain were recorded as having read nothing.
+  it('fails when the two hosts serve different tracker bytes for the same address', async () => {
+    stubCustomHost([{ id: 'domain-1', hostname: HOSTNAME }], `https://${HOSTNAME}/r/quick-glass`, {
+      [HOSTNAME]: '/* the previous tracker, still cached */',
+      'htmlradar.page': '/* the tracker this deploy shipped */',
+    });
+    await expect(customHostStep(cfg)).rejects.toThrow(/stale tracker/);
+  });
+
+  // The same skew, caught on the reader's own host alone: the worker hashes
+  // what it served, so a cached copy announces itself as the wrong version.
+  it('fails when the host serves a version other than the one the document asked for', async () => {
+    stubCustomHost(
+      [{ id: 'domain-1', hostname: HOSTNAME }],
+      `https://${HOSTNAME}/r/quick-glass`,
+      {},
+      { [HOSTNAME]: '0123456789ab' },
+    );
+    await expect(customHostStep(cfg)).rejects.toThrow(
+      /served version 0123456789ab, not the abc123def456/,
+    );
+  });
+
+  it('passes, and says so, when both hosts serve the same bytes', async () => {
+    stubCustomHost([{ id: 'domain-1', hostname: HOSTNAME }], `https://${HOSTNAME}/r/quick-glass`);
+    await expect(customHostStep(cfg)).resolves.toContain(
+      `tracker ${TRACKER_SRC} identical on ${HOSTNAME} and htmlradar.page`,
+    );
   });
 
   // The failure that would otherwise pass: a healthy 200 from the wrong host.

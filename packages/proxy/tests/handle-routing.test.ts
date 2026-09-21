@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRACKER_VERSION } from '../src/tracker-version.js';
 
 // Which host may serve which share.
 //
@@ -244,6 +246,36 @@ describe('rule 2 — a share that stores a hostname is redirected there from the
   it('serves it in place on its own host', async () => {
     const res = await fetchAs('https://acme.htmlradar.page/r/acme-proposal');
     expect(res.status).toBe(200);
+  });
+
+  it('hands a handle host the same versioned tracker address, relative to itself', async () => {
+    // A handle host is another hostname a document can be cached on, so it
+    // gets the same treatment as the share host and a customer's own domain:
+    // one relative, content-derived address, answered by the host that served
+    // the document.
+    const injected = (await import('../src/inject.js')).injectTracker as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    // The frame route, because this file runs with the trust wrapper on, so
+    // that is where the document itself (and the tracker) is served.
+    await fetchAs('https://acme.htmlradar.page/r/acme-proposal/frame', {
+      headers: { 'Sec-Fetch-Dest': 'iframe' },
+    });
+    expect((injected.mock.calls[0]![1] as { trackerUrl: string }).trackerUrl).toBe(
+      `/v1/tracker.${TRACKER_VERSION}.js`,
+    );
+
+    // The real bundle, because the worker hashes what it fetched before it
+    // pins anything (see host-routing.test.ts for that rule in full).
+    const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(readFileSync(new URL('../../app/public/v1/tracker.js', import.meta.url)), {
+        status: 200,
+      }),
+    );
+    const res = await fetchAs(`https://acme.htmlradar.page/v1/tracker.${TRACKER_VERSION}.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+    upstream.mockRestore();
   });
 });
 

@@ -4,6 +4,14 @@ compatibility_date = "2026-05-01"
 compatibility_flags = []
 workers_dev = false  # We don't want this exposed at *.workers.dev — only via the zone route
 
+# Re-derives src/tracker-version.ts from the tracker bundle before every
+# bundle, so the versioned address this worker serves documents (see
+# TRACKER_PATH in src/index.ts) always matches the bytes of the deploy that
+# ships it. CI copies the freshly built tracker into packages/app/public/v1
+# before deploying this worker, so this reads what recipients will receive.
+[build]
+command = "node scripts/tracker-version.mjs"
+
 # Production routes.
 #
 # htmlradar.page is the content domain: recipient documents are served there

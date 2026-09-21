@@ -85,7 +85,10 @@ from your laptop, the manual sequence is:
 cd packages/tracker && pnpm build
 cp dist/tracker.js ../app/public/v1/tracker.js
 
-# Proxy worker — required
+# Proxy worker — required. Its `wrangler deploy` re-derives the tracker's
+# versioned address from ../app/public/v1/tracker.js, so the copy above must
+# happen first or this ships documents pointing at the previous script's
+# address.
 cd ../proxy
 wrangler secret put SUPABASE_URL
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
@@ -193,7 +196,39 @@ Point the relevant routes at Cloudflare:
 - `htmlradar.page/*` → proxy worker (whole zone; set via worker route in `packages/proxy/wrangler.toml`)
 - `htmlradar.com/r/*` → proxy worker as well, where it only redirects to `htmlradar.page`
 - `htmlradar.page/v1/tracker.js` → served by the proxy worker, which fetches it from `TRACKER_URL` so the tracker is first-party to the document that loads it
-- `htmlradar.com/v1/tracker.js` → served by the Pages app from `public/v1/tracker.js` (copied at build time); this is what `TRACKER_URL` points at
+- `htmlradar.page/v1/tracker.<hash>.js` → the same script at its versioned address, served by the same worker from the same `TRACKER_URL`
+- `htmlradar.com/v1/tracker.js` → served by the Pages app from `public/v1/tracker.js` (copied at build time); this is what `TRACKER_URL` points at. Only `/r/*` is routed to the worker on this host, so the versioned address does not exist here and documents served here are pointed at the fixed one.
+
+### Two tracker addresses, and which one to use
+
+Every document HTMLRadar serves points at **`/v1/tracker.<hash>.js`**, where the hash is the first
+twelve hex characters of the tracker bundle's SHA-256. It is generated, never typed:
+`packages/proxy/scripts/tracker-version.mjs` writes `packages/proxy/src/tracker-version.ts`, and
+`wrangler.toml`'s `[build]` command re-runs it before every deploy. New script bytes therefore mean a
+new address, which no cache anywhere is holding yet — so a document served after a deploy can never
+be handed the previous deploy's script.
+
+A versioned address is served `Cache-Control: public, max-age=31536000, immutable`, but **only after
+the worker has hashed the bytes it fetched and confirmed they are that version**. The worker and the
+app deploy in separate steps and the edge cache is purged in a later one still, so for a short window
+a request for the new address can be answered with the previous script; pinning that for a year would
+make the very defect this design prevents permanent. Unverified bytes are served with the
+five-minute lifetime instead, and the correct bytes are pinned as soon as they exist. Every tracker
+response carries `X-HTMLRadar-Tracker-Version`, the version of what was actually served, which is
+what the daily live journey and the deploy's "Verify the versioned tracker address is pinned" step
+read.
+
+This exists because of a real failure on 21 September 2026. `htmlradar.page` served the new tracker
+while a customer's own domain, proxied through the customer's own Cloudflare zone, kept serving the
+previous one for hours — a cache our deploys cannot purge. The stale script did not understand the
+new page configuration, and a reader who spent 35 seconds was recorded as 0.
+
+**If you embed the tracker directly in your own HTML, keep using the fixed address
+`/v1/tracker.js`.** It serves the current script and always will. It is served
+`Cache-Control: public, max-age=300, must-revalidate` — five minutes — so a copy cached anywhere can
+never be more than a few minutes behind. An address with a version the worker does not recognise —
+an older deploy's, or a document a browser is still holding across a deploy — also serves the current
+script on that same five-minute lifetime, rather than a 404, so no open page ever loses tracking.
 
 The content domain needs a DNS record for the worker route to attach to. A proxied placeholder `AAAA` record for `@` pointing at `100::` is the usual one — the worker answers before anything reaches it. SSL/TLS mode on both zones must be Full or Full (strict).
 

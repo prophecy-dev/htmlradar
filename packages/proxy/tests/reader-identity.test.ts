@@ -308,7 +308,7 @@ describe('the opt-out', () => {
     const html = await res.text();
     expect(ridCookie(res)).toBeNull();
     expect(readerIdIn(html)).toBeNull();
-    expect(html).not.toContain('src="/v1/tracker.js"');
+    expect(html).not.toContain('src="/v1/tracker');
   });
 
   it('does not use an identifier the reader still holds from before', async () => {
@@ -490,7 +490,7 @@ describe('a planted cookie from a parent domain', () => {
       cookie: '__Host-hr_optout=1; hr_optout=0',
     });
     const html = await res.text();
-    expect(html).not.toContain('src="/v1/tracker.js"');
+    expect(html).not.toContain('src="/v1/tracker');
     expect(readerIdIn(html)).toBeNull();
     expect(ridCookie(res)).toBeNull();
   });
@@ -499,7 +499,7 @@ describe('a planted cookie from a parent domain', () => {
     // Both under the old name: the genuine '1' first, the planted '0' second.
     const res = await get('/r/acme-proposal', { cookie: 'hr_optout=1; hr_optout=0' });
     const html = await res.text();
-    expect(html).not.toContain('src="/v1/tracker.js"');
+    expect(html).not.toContain('src="/v1/tracker');
     expect(ridCookie(res)).toBeNull();
   });
 
@@ -507,7 +507,7 @@ describe('a planted cookie from a parent domain', () => {
   // tracking and harms no reader, so it is left alone deliberately.
   it('honours a planted opt-out, because turning tracking off hurts nobody', async () => {
     const res = await get('/r/acme-proposal', { cookie: 'hr_optout=1' });
-    expect(await res.text()).not.toContain('src="/v1/tracker.js"');
+    expect(await res.text()).not.toContain('src="/v1/tracker');
   });
 });
 
@@ -522,7 +522,7 @@ describe('migrating an old opt-out', () => {
     expect(migrated).not.toMatch(/Domain=/i);
     // Still no tracker and no identifier: migrating is not resuming.
     const html = await res.text();
-    expect(html).not.toContain('src="/v1/tracker.js"');
+    expect(html).not.toContain('src="/v1/tracker');
     expect(readerIdIn(html)).toBeNull();
   });
 
