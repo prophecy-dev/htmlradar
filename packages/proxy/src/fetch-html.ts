@@ -1,4 +1,4 @@
-import type { Document } from './supabase.js';
+import type { Document } from './store.js';
 import type { Env } from './env.js';
 
 const URL_CACHE_TTL_SECONDS = 600;

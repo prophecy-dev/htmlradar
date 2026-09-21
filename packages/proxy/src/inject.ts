@@ -1,17 +1,16 @@
-import type { Attachment, Share } from './supabase.js';
+import type { Attachment, Share } from './store.js';
 import { escapeHtml } from './escape.js';
-import { documentCsp, FRAME_PERMISSIONS_POLICY } from './wrapper.js';
+import { documentCsp } from './csp.js';
+import { ogMeta, type OgCard } from './og.js';
 
 interface InjectOptions {
   share: Share;
-  tier: 'free' | 'pro';
-  // True only on /r/{slug}/frame, the response the trust wrapper puts in its
-  // frame. It is the one response allowed to be framed, and only by us.
-  framed?: boolean;
   trackingEnabled: boolean;
   trackerUrl: string;
-  supabaseUrl: string;
-  supabaseAnonKey: string;
+  /** Origin the tracker reports to: this worker, which serves /t/start_session and /t/update_session. */
+  endpoint: string;
+  /** The share's unfurl card; replaces any og:/twitter: tags the document carries. */
+  og?: OgCard;
   email?: string;
   // The returning-reader identifier, derived from the `hr_rid` cookie and this
   // document (see deriveReaderId in auth.ts). Handed to the tracker through the
@@ -36,15 +35,15 @@ interface InjectOptions {
   attachments?: Attachment[];
 }
 
-// Injects the tracker config + script tag into <head>, and (for free tier)
-// a chrome footer before </body>. The document body is never modified.
+// Injects the unfurl card and the tracker into <head>, and the "tracked"
+// pill before </body>. The document body is never modified.
 
 export function injectTracker(html: Response, opts: InjectOptions): Response {
-  const headSnippet = opts.trackingEnabled ? headInjection(opts) : '';
-  // TODO(decision): Founder decision 30 Aug 2026: no recipient notice or
-  // opt-out link on any tier; opt-out remains reachable via
-  // window.HTMLRadar.optOut().
-  const footerSnippet = opts.tier === 'free' ? chromeFooter() : '';
+  const headSnippet =
+    (opts.og ? ogMeta(opts.og) : '') + (opts.trackingEnabled ? headInjection(opts) : '');
+  // Every tracked document says so, and links the notice. An opted-out
+  // reader is not tracked, so they get no pill.
+  const footerSnippet = opts.trackingEnabled ? trackedPill() : '';
   // Attachments are ALWAYS surfaced to the recipient when present, per
   // the design decision: "if you don't want a file shared,
   // don't attach it." The recipient view shows a corner pill + side
@@ -78,9 +77,18 @@ export function injectTracker(html: Response, opts: InjectOptions): Response {
   // real customer doc on 2026-07-08.) We record whether each anchor fired
   // and, at document end, append anything that didn't land onto the end of
   // the stream so the browser still parses and executes it.
+  const dropIfCarded = {
+    element(el: Element) {
+      if (opts.og) el.remove();
+    },
+  };
   let headSeen = false;
   let bodySeen = false;
   const rewriter = new HTMLRewriter()
+    // The sender's own card tags would compete with the share's; the share's
+    // card is what the sender set for this link.
+    .on('meta[property^="og:"]', dropIfCarded)
+    .on('meta[name^="twitter:"]', dropIfCarded)
     .on('head', {
       element(el) {
         headSeen = true;
@@ -103,33 +111,20 @@ export function injectTracker(html: Response, opts: InjectOptions): Response {
   const out = rewriter.transform(html);
   const headers = new Headers(out.headers);
   headers.set('Cache-Control', 'private, max-age=0, must-revalidate');
-  if (opts.framed) {
-    // X-Frame-Options is deliberately ABSENT on this one route. It is the
-    // older instruction and it would override the newer frame-ancestors
-    // below, so leaving it here would stop the wrapper framing the document
-    // it exists to frame. Every other response still carries DENY.
-    //
-    // The two features that can paint outside a frame's rectangle are denied
-    // here as well as on the wrapper and on the frame element — three places,
-    // because a strip that can be covered is not a control.
-    headers.set('Permissions-Policy', FRAME_PERMISSIONS_POLICY);
-  } else {
-    headers.set('X-Frame-Options', 'DENY');
-  }
-  // NOT no-referrer, on either path. The first draft of the trust layer set it
-  // and would have blanked the referral source the tracker records today.
+  headers.set('X-Frame-Options', 'DENY');
+  // NOT no-referrer: it would blank the referral source the tracker records.
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   headers.set('X-Content-Type-Options', 'nosniff');
   // Minimal CSP. Customer HTML may contain arbitrary inline scripts/styles,
   // so we can't lock script-src. The opaque-origin sandbox, framing, base-uri
   // and form-action are what limit the blast radius of malicious docs, and
-  // they arrive as ONE header built by documentCsp — see wrapper.ts for why
+  // they arrive as ONE header built by documentCsp — see csp.ts for why
   // they may not be set in two places again. Nothing legitimate loses to
   // form-action: the tracker's own email gate calls preventDefault and sends
   // the address with fetch, which form-action does not govern, and the
   // proxy's gate and opt-out pages are separate responses that never carry
   // this header.
-  headers.set('Content-Security-Policy', documentCsp(opts.framed ?? false));
+  headers.set('Content-Security-Policy', documentCsp());
   // Only on the response that mints it. Re-sending on every load would reset a
   // ninety-day life to ninety days on each open, and would rewrite a value a
   // second tab on the same host is already using.
@@ -155,8 +150,7 @@ function headInjection(opts: InjectOptions): string {
   return [
     `<script>window.HTMLRadarConfig=${safeJson};</script>`,
     `<script src="${escapeHtml(opts.trackerUrl)}"`,
-    ` data-supabase-url="${escapeHtml(opts.supabaseUrl)}"`,
-    ` data-supabase-anon-key="${escapeHtml(opts.supabaseAnonKey)}"`,
+    ` data-endpoint="${escapeHtml(opts.endpoint)}"`,
     ` data-share-slug="${escapeHtml(opts.share.slug)}"`,
     ` defer></script>`,
   ].join('');
@@ -224,7 +218,7 @@ function attachmentsPanel(slug: string, attachments: Attachment[]): string {
     <button type="button" class="hr-att-close" aria-label="Close">×</button>
   </div>
   <ul class="hr-att-list">${items}</ul>
-  <div class="hr-att-foot">Shared via HTMLRadar · downloads attributed to your email</div>
+  <div class="hr-att-foot">Downloads are shared with the sender</div>
 </aside>
 <style>
 .hr-att-pill,.hr-att-drawer,.hr-att-bg,.hr-att-pill *,.hr-att-drawer *{box-sizing:border-box}
@@ -336,7 +330,7 @@ body.hr-att-open .hr-att-drawer{transform:translateX(0)}
 //   - share's recipient label (sender's hint, e.g. "Marc — Series A")
 //   - null → fall back to the share-anonymous notice
 function downloadGuard(identity: string | null): string {
-  const text = identity ?? 'Shared via htmlradar.com';
+  const text = identity ?? 'Confidential';
   const safe = escapeHtml(text);
   // Repeated enough times that the grid covers a wide laptop viewport
   // (5–6 cols × 5 rows ≈ 25-30 cells). Each cell renders one rotated
@@ -426,37 +420,24 @@ function extOf(filename: string): string {
   return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : '';
 }
 
-// Free-tier "Powered by HTMLRadar" credit baked into the recipient view.
-//
-// Visual register is deliberately quiet:
-//   - bottom-right corner (out of the reading path)
-//   - small typographic mark, no big colour block
-//   - translucent cream chip so it sits on top of any sender background
-//     (dark or light) without screaming
-//
-// The big solid pill is reserved for surfaces HTMLRadar OWNS (the gate,
-// the error pages — see proxy/src/responses.ts). On the viewed doc the
-// sender's content is the canvas; the brand is a credit, not a billboard.
-//
-// Removing this badge is the Pro tier's value prop — see
-// injectTracker(opts.tier) and the pricing page's "No footer" bullet.
-function chromeFooter(): string {
+// The notice on every tracked document: a small pill in the bottom-right
+// corner saying the link is tracked, linking the privacy page. Quiet (out of
+// the reading path, translucent so it sits on any background) but always
+// present — an EU recipient is owed the notice while they are being tracked.
+// target=_blank: the document runs sandboxed, and the notice must open
+// without navigating the reader away from what they are reading.
+function trackedPill(): string {
   return [
-    `<a href="https://htmlradar.com/?utm_source=powered-by-badge&utm_medium=shared-doc" target="_blank" rel="noopener" `,
+    `<a href="/privacy" target="_blank" rel="noopener" class="hr-tracked" `,
     `style="position:fixed;bottom:10px;right:12px;z-index:2147483646;`,
     `display:inline-flex;align-items:center;gap:6px;`,
     `background:rgba(251,241,232,0.92);color:#3A2818;text-decoration:none;`,
-    `font:500 10.5px/1 ui-monospace,'JetBrains Mono','SF Mono',Menlo,monospace;`,
+    `font:500 10.5px/1 ui-monospace,'SF Mono',Menlo,monospace;`,
     `letter-spacing:0.04em;`,
-    `padding:5px 9px 5px 7px;border-radius:6px;`,
+    `padding:5px 9px;border-radius:999px;`,
     `border:1px solid rgba(135,105,89,0.25);`,
     `box-shadow:0 1px 2px rgba(31,17,8,0.06);backdrop-filter:blur(6px);">`,
-    `<svg aria-hidden viewBox="0 0 24 24" width="11" height="11" style="vertical-align:-1px;flex:0 0 auto;">`,
-    `<circle cx="12" cy="12" r="9" fill="none" stroke="#7A1F2E" stroke-width="1.6" opacity="0.55"/>`,
-    `<line x1="12" y1="12" x2="12" y2="3" stroke="#7A1F2E" stroke-width="1.8" stroke-linecap="round"/>`,
-    `<circle cx="12" cy="12" r="1.8" fill="#7A1F2E"/>`,
-    `</svg>`,
-    `<span>Powered by <span style="color:#7A1F2E;">HTMLRadar</span></span>`,
+    `This link is tracked · privacy`,
     `</a>`,
   ].join('');
 }

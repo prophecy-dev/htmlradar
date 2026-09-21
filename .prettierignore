@@ -2,6 +2,9 @@
 # Keep copied third-party files byte-for-byte as published.
 packages/app/public/v1/
 packages/app/public/pdfjs/
+# Generated from the tracker build; tests/tracker-bundle.test.ts compares it
+# byte-for-byte with a fresh run of the generator.
+packages/proxy/src/tracker-bundle.ts
 
 # Published evidence: raw capture output and the script that produced it, kept
 # byte-for-byte as run so a re-run can be diffed against it.

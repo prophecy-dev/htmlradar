@@ -490,6 +490,7 @@ export interface UpdateSessionInput {
 /** What the caller needs to send a first-read alert. */
 export interface FirstReadAlert {
   sessionId: string;
+  documentId: string;
   ownerEmail: string;
   ownerName: string | null;
   ownerTimezone: string;
@@ -668,6 +669,7 @@ async function decideFirstReadAlert(db: DB, sessionId: string): Promise<FirstRea
 
   return {
     sessionId,
+    documentId: r['document_id'] as string,
     ownerEmail,
     ownerName: (r['display_name'] as string | null) ?? null,
     ownerTimezone: (r['timezone'] as string | null) ?? 'UTC',
