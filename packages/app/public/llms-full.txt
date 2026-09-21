@@ -828,6 +828,9 @@ Whether your reader needs an account depends on how the artifact was shared. Bot
 Password or expiry on a Claude artifact
 Claude offers audience levels, not a password or a date. What it does offer, and how to add a real gate.
 
+Update a document after you have sent it
+Replace the contents behind a link you already sent. What stays the same, what does not, and the limits.
+
 HTMLRadar for Claude Code
 Share the HTML that Claude Code writes, straight from the terminal session.
 
@@ -971,7 +974,7 @@ Yes, for a publicly reachable HTML page. Use absolute URLs for its assets so the
 
 Track your artifact free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
 
-Related: track any HTML deck , reveal.js deck analytics , proposal tracking , turn a Claude artifact into a link , and all the free HTML tools .
+Related: track any HTML deck , reveal.js deck analytics , proposal tracking , turn a Claude artifact into a link , updating a document after you have sent it , and all the free HTML tools .
 Three questions this page does not answer: do Claude artifacts expire , how to share one with someone who has no Claude account , and how to put a password or an expiry date on one .
 
 ---
@@ -1217,7 +1220,108 @@ Yes, and it is included in Pro at $15 a month with no extra charge. You add one 
 
 Try HTMLRadar free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
 
-Related: HTMLRadar vs Papermark , DocSend vs Papermark compared , the free PDF-to-HTML converter , HTMLRadar pricing , tracked links on your own domain , HTMLRadar vs Peony , HTMLRadar vs Stacktree , HTMLRadar vs Tiiny.host , HTMLRadar vs HummingDeck , self-hosted document tracking , and pitch deck tracking for founders .
+Related: HTMLRadar vs Papermark , HTMLRadar vs LiveSend , DocSend vs Papermark compared , the free PDF-to-HTML converter , HTMLRadar pricing , tracked links on your own domain , HTMLRadar vs Peony , HTMLRadar vs Stacktree , HTMLRadar vs Tiiny.host , HTMLRadar vs HummingDeck , self-hosted document tracking , and pitch deck tracking for founders .
+
+---
+
+## https://htmlradar.com/compare/livesend
+
+HTMLRadar vs LiveSend (2026) | HTMLRadar HTMLRadar · Compare
+HTMLRadar vs LiveSend.
+Competitor facts checked 21 September 2026
+Choose LiveSend if you want to fix the wording of a report in your browser after you have sent it, or if you want your client to select a passage and comment on it, because LiveSend does both on its Pro plan and HTMLRadar does neither. Choose HTMLRadar if what you need back is which sections each recipient read and for how long, or if you want to read the source, run it on your own infrastructure, or put a password, an expiry date and an e-mail gate on a link without paying.
+
+These two products are aimed at the same person. LiveSend’s home page opens with “Deliver client reports on your own branded link” and names marketing agencies, consultants and B2B sales teams; HTMLRadar was built for the same three. Both take an HTML report that an assistant or a person wrote and turn it into a tracked link instead of an attachment. So this page is not an argument that one is a worse product. It is a list of the places where the two genuinely differ, checked against LiveSend’s own pages on 21 September 2026 .
+The headline difference
+HTMLRadar
+Measures reading, section by section. Open source.
+The report you get back names the headings each recipient stopped on and how long they stayed on each one. The whole repository is AGPL-3.0 and runs on your own Cloudflare and Supabase accounts if you would rather not use ours.
+
+LiveSend
+Keeps the document editable, and lets readers reply to it.
+On its Pro plan you can fix a number or a paragraph in the browser without re-uploading anything, every save is versioned, and a client can select a passage and leave a comment that you answer from your dashboard.
+
+What LiveSend does that HTMLRadar does not
+Four things, stated from LiveSend’s own pages as they read on 21 September 2026 .
+Editing a published document in place. LiveSend’s FAQ says you can fix a number or a paragraph directly in the dashboard on Pro, with no re-upload and no resend, and that every save is versioned. HTMLRadar has no editor: you change the file on your own machine and replace it.
+Comments from the reader. LiveSend invites a client to annotate the document by selecting text, and the sender replies and resolves from the dashboard. HTMLRadar has nothing of the kind — it measures reading and sends you nothing the reader typed.
+A larger connector. The LiveSend connector for Claude lists twelve tools against HTMLRadar’s seven, and two of them have no HTMLRadar equivalent: editing a published document, and restoring an earlier version.
+A team plan. LiveSend sells a Team plan with a shared space, central administration and one invoice. HTMLRadar has no team plan at all — one account, one flat price.
+On price, the honest version is narrower than it first looks. Billed monthly both Pro plans are $15. Paid a year at a time, LiveSend is $144 and HTMLRadar is $150, so LiveSend is $6 a year cheaper, and only then.
+
+What HTMLRadar does that LiveSend does not
+Reading measured section by section. The analytics LiveSend publishes are opens, unique visitors, read time and country; no per-section or per-heading measure appears anywhere on its pages. HTMLRadar records time against each heading or slide, per recipient, so you can see that someone spent four minutes on the pricing section and nine seconds on the method notes.
+Open source, and self-hostable. HTMLRadar is AGPL-3.0 across the whole repository — tracker, proxy, schema and web app — and runs in your own Cloudflare and Supabase accounts. LiveSend publishes no source repository, no licence and no self-hosting option; it is a hosted service operated by Nanoscale Studio, a sole proprietorship registered in France.
+Your own domain, included in Pro. One CNAME record and your links are served from decks.yourcompany.com instead of ours. LiveSend’s FAQ states that custom domains are on its roadmap and that every document lives at a livesend.io address today.
+Every link control on the free plan. An e-mail gate, a password, an expiry date, revoke, and e-mail-domain and per-e-mail allow-lists all work on HTMLRadar’s free plan. LiveSend lists password protection and custom expiration on Pro, and its free plan is described as public link only.
+A PDF-to-HTML converter. If what you have is a PDF deck rather than an HTML page, HTMLRadar converts it in your browser, free and without an account. LiveSend publishes no converter.
+Room for a larger file. LiveSend states a 3 MB limit per HTML file, 6 MB on Pro. HTMLRadar accepts 30 MB through the dashboard, and 5 MB through the API or the connector.
+
+Side by side
+LiveSend column checked against livesend.io’s home, FAQ, connector and terms pages on 21 September 2026 .
+Feature HTMLRadar LiveSend
+What you send it An HTML file, or a URL you already host An HTML file, or HTML pasted as code
+Reading data it reports Section by section, per recipient, with dwell time and scroll depth Opens, unique visitors, read time and country
+Edit the document after sending Replace the whole file; every link keeps working Edit the text in the browser on Pro; every save is versioned
+Comments from readers No On Pro: a reader selects a passage and comments; you reply and resolve
+Free plan 2 tracked links, full section-level analytics, a “Powered by HTMLRadar” credit 3 documents, public link only, watermark, anonymous open alerts, 7-day counts
+Password, expiry and allow-lists E-mail gate, password, expiry, revoke and allow-lists on the free plan Password protection and custom expiration listed on Pro
+Entry price $15 a month, or $150 a year, unlimited links $15 a month, or $144 a year ($12 a month billed annually), unlimited documents
+Team plan None; one flat price, no per-seat charge $59 a month, or $564 a year, 3 seats included, then $25 a seat
+Your own domain Included in Pro, one CNAME record Stated as roadmap; links are livesend.io addresses today
+Claude connector mcp.htmlradar.com/mcp, seven tools livesend.io/api/mcp/mcp, twelve tools
+Largest HTML file 30 MB uploaded in the dashboard; 5 MB through the API or connector 3 MB, or 6 MB on Pro
+PDF-to-HTML converter Free at /convert, in your browser, no account None published
+Open source AGPL-3.0, whole repository No source or licence published
+Self-hosting Your own Cloudflare and Supabase accounts Hosted service; no self-hosted option published
+
+What each one costs
+Prices as published on 21 September 2026 . LiveSend lists three plans: Free at $0, Pro at $15 a month billed monthly or $144 a year, and Team at $59 a month billed monthly or $564 a year, with three seats included and $25 a seat after that. Its free plan covers three documents on a public link, with a LiveSend watermark on every page, anonymous “opened” alerts and seven days of view and visitor counts. Its own terms of service restate the Pro price as “$15/month or $12/month billed annually ($144/year)”.
+HTMLRadar is $15 a month or $150 a year for unlimited tracked links, with no per-seat charge, and a free plan of two tracked links carrying the same section-level analytics as Pro and every link control. A custom domain for your tracked links is included in Pro at no extra charge. The full breakdown is on the HTMLRadar pricing page .
+One warning if you are checking these numbers yourself: LiveSend has no /pricing page, the prices sit in a block on its home page, and that block’s billing switch opens on Yearly. Read it quickly and you will come away thinking Pro is $12 a month when the monthly price is $15.
+
+When LiveSend is the right choice
+The report changes after you send it, in small ways, often, and you would rather fix a number in a browser than edit a file and upload it again.
+You want the client to write back inside the document rather than in an e-mail, on the exact sentence they are asking about.
+Several people in your firm send client work and you want one shared space, one invoice and central administration.
+You want your assistant to do more of the work from the conversation than HTMLRadar’s seven tools cover, including editing a published document and restoring an earlier version.
+
+When HTMLRadar is the right choice
+The question you actually want answered is which part of the report held attention, not only whether it was opened and for how many minutes in total.
+You want to read the tracking code, or keep client documents on infrastructure you control, under a licence that lets you.
+You want a password, an expiry date, an e-mail gate or an allow-list on a link before you are ready to pay for anything.
+Your links should carry your own domain, and you would rather not wait for a roadmap.
+What you have is a PDF deck, and you need it to become a web page first.
+
+When not to choose HTMLRadar
+HTMLRadar has a narrow job and there are cases where it is the wrong tool. Do not choose it if the document has to stay editable in a browser after it is sent, because HTMLRadar has no editor and replacing the file means producing a new file. Do not choose it if you need comments back from the reader, or a shared team space with one invoice, because it has neither. Do not choose it if you need to roll a document back to an earlier version on demand: HTMLRadar records every version’s filename, size and time, but there is no button that restores one. And if what you send is a PDF or an office file that will never become a web page, the section-level reading data that is the point of HTMLRadar will not be there for you.
+
+Moving from LiveSend
+There is no import. What transfers is the HTML file itself: download or re-export the document, upload it to HTMLRadar, and create one link per recipient. Links you already sent from LiveSend keep working at LiveSend — nothing here switches them off — so you can run the next report through both and compare what each tells you. If you want a hand with that, email [email protected] . Free.
+One habit worth carrying over: if you are used to editing a sent document in place, read how to update a document after you have sent it on HTMLRadar first, because the same outcome is reached a different way.
+
+Common questions
+Is LiveSend or HTMLRadar better for sharing an HTML report with clients?
+It depends on what you want back. Both take an HTML report and give you a tracked link, and both are aimed at agencies, consultants and B2B sales teams. LiveSend reports opens, unique visitors, read time and country, and lets you edit the document in the browser afterwards and collect comments from the reader on its Pro plan. HTMLRadar reports which sections each recipient read and for how long, is open source under AGPL-3.0 and self-hostable, and puts the e-mail gate, password, expiry and allow-lists on its free plan.
+
+How much does LiveSend cost?
+On 21 September 2026 LiveSend listed a free plan of three documents, a Pro plan at $15 a month billed monthly or $144 a year, and a Team plan at $59 a month billed monthly or $564 a year with three seats included and $25 a seat after that. Its terms of service restate Pro as "$15/month or $12/month billed annually ($144/year)". HTMLRadar Pro is $15 a month or $150 a year, so the two are identical month to month and LiveSend is $6 a year cheaper paid annually.
+
+Is LiveSend open source?
+Not as far as its own site says. LiveSend publishes no source repository, no licence statement and no self-hosting option on any of its pages; its terms describe a hosted service operated by Nanoscale Studio, a sole proprietorship registered in France. HTMLRadar is AGPL-3.0 across the whole repository — tracker, proxy worker, schema and web app — and can be run entirely in your own Cloudflare and Supabase accounts.
+
+Can I edit a document after I have sent the link?
+On LiveSend, yes: its FAQ says Pro users fix a number or a paragraph directly in the dashboard, with every save versioned. On HTMLRadar there is no editor. You change the file yourself and replace it, and every link you have already sent serves the new contents the next time it is opened, with the same address and the same reading history. The trade is that HTMLRadar needs a new file and LiveSend does not.
+
+Does LiveSend have a Claude connector?
+Yes. LiveSend publishes a connector at livesend.io/api/mcp/mcp and describes it as twelve tools grouped under five intentions, including editing a published document and restoring an earlier version. HTMLRadar publishes a connector at mcp.htmlradar.com/mcp with seven tools: publish a document, make another link for it, list your links, read who opened one, switch one off, replace the contents behind every link, and check which plan you are on.
+
+Which one tracks how long someone spent on each section?
+HTMLRadar does. It records time against each heading or slide, per recipient, so the report distinguishes four minutes on the pricing section from nine seconds on the appendix. LiveSend publishes opens, unique visitors, read time and country; no per-section measure appears on any of its pages, though it does e-mail you when a document is opened.
+
+Try HTMLRadar free First 2 tracked links free. No credit card. AGPLv3 source on GitHub .
+
+Related: sending an HTML report to a client , HTMLRadar vs DocSend , HTMLRadar vs Papermark , HTMLRadar pricing , tracked links on your own domain , and self-hosted document tracking .
 
 ---
 
