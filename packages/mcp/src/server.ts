@@ -35,6 +35,15 @@ const linkOptionsShape = {
     .boolean()
     .default(true)
     .describe('Ask the recipient for their email before the document opens. Defaults to true.'),
+  verify_email: z
+    .boolean()
+    .optional()
+    .describe(
+      "Verify that the address really is the reader's: we email a six-digit code and open the " +
+        'document only when the reader types it back. Off by default. Use it when the list of ' +
+        'who opened the document has to be true rather than merely typed. Needs the email gate, ' +
+        'which is on by default; with it off the call is refused.',
+    ),
   password: z.string().optional().describe('Extra password gate on top of the email gate.'),
   lock_deck: z
     .boolean()
@@ -102,6 +111,7 @@ const replaceDocumentShape = {
 
 const OPTIONAL_LINK_FIELDS = [
   'recipient_label',
+  'verify_email',
   'password',
   'lock_deck',
   'allowed_email_domains',
@@ -551,7 +561,7 @@ function failure(message: string): CallToolResult {
 
 export function createServer(config: Config): McpServer {
   const server = new McpServer(
-    { name: 'htmlradar', version: '0.4.0' },
+    { name: 'htmlradar', version: '0.5.0' },
     {
       // The one consent sentence lives here and nowhere else. It is a routing
       // hint the client may or may not act on, not a security control: the

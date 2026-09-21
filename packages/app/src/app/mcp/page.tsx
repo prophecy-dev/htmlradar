@@ -157,6 +157,12 @@ const SHARE_INPUTS = [
     'Who the link is for, e.g. "Acme". One link per recipient.',
   ],
   ['require_email', 'boolean', 'true', 'Ask for an email before the document opens.'],
+  [
+    'verify_email',
+    'boolean',
+    'false',
+    'Mails a six-digit code to the address the reader types and opens the document only once it comes back. Needs the email gate, or the call returns a 422.',
+  ],
   ['password', 'string', 'none', 'Extra gate on top of the email gate. At least 8 characters.'],
   [
     'lock_deck',

@@ -13,7 +13,7 @@
 //
 //   node packages/app/scripts/live-journey.mjs
 //
-// Runs daily from .github/workflows/live-journey.yml. Four steps:
+// Runs daily from .github/workflows/live-journey.yml. Five steps:
 //
 //   sign-in     — mint a magic-link token with the Supabase admin API and walk
 //                 it through /auth/callback and /auth/confirm exactly as a
@@ -22,6 +22,9 @@
 //                 its activity, then revoke it.
 //   custom-host — the same journey on the account's own domain, when it has a
 //                 live one. Skipped, not failed, when it has none.
+//   verify-code — ask a verified-gate link for a code as a reader does, and
+//                 prove the mail provider ACCEPTED the message, so a dead
+//                 RESEND_API_KEY is noticed within a day.
 //   cleanup     — delete yesterday's journey documents, so a daily check does
 //                 not leave a year of clutter on a real account.
 //
@@ -433,7 +436,232 @@ export async function trackerSkew(body, hostname, shareBase) {
 }
 
 /**
- * Step 4 — take yesterday's journey documents away.
+ * The one reader in this repository that is deliberately NOT on example.com.
+ *
+ * Every other journey sends its readers to `example.com`, which is reserved by
+ * RFC 2606 and reaches nobody — a check must never mail a stranger. This step
+ * cannot use it: what it proves is that the mail provider ACCEPTED a message,
+ * and nothing is accepted for an address at a domain that does not receive.
+ * So it uses the address Resend documents for exactly this, which takes the
+ * message and throws it away, with a `+label` so this check has its own
+ * address without needing its own account.
+ */
+const VERIFY_READER = 'delivered+verify-journey@resend.dev';
+
+/** The only domains that reader may live on. Same rule, same reason, as
+ *  SINK_DOMAINS in e2e/journeys/lib.ts. */
+const SINK_DOMAINS = ['resend.dev'];
+
+/**
+ * Refuse to run rather than mail a person.
+ *
+ * A throw, not a skip: a skip is something a tired person scrolls past, and
+ * the cost of getting this wrong is a real code in a real inbox every single
+ * day. It guards a constant, so it can only ever fire on somebody editing
+ * that constant — which is precisely the edit worth stopping.
+ */
+export function requireMailSink(address) {
+  const domain = address.split('@')[1]?.toLowerCase() ?? '';
+  if (!SINK_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
+    throw new Error(
+      `the verified-gate reader is "${address}", which is not a mail sink. This step makes ` +
+        `production send a real code to that address on every run, so it must be one that ` +
+        `accepts and discards: ${SINK_DOMAINS.join(', ')} (for example ${VERIFY_READER}).`,
+    );
+  }
+  return address;
+}
+
+/**
+ * Step 4 — a verification code, all the way to the mail provider.
+ *
+ * What this catches and nothing else does: a revoked or expired RESEND_API_KEY
+ * on the proxy worker. Since the send moved into `ctx.waitUntil`, the reader
+ * is answered the same neutral page whether the provider took the message or
+ * refused it (sendCodeStep in packages/proxy/src/index.ts). That is
+ * deliberate — the old send-failure page was itself an enumeration leak — and
+ * it means no screen anywhere can tell you the key is dead. What the provider
+ * did is written down in one place only — a `share.code_sent` row when it
+ * accepted the message, a `share.code_send_failed` row when it refused — so
+ * this step drives a real gate and then reads that table. A pass needs the
+ * acceptance row: silence is a failure, because silence is what a hung send
+ * and a dropped background execution both look like.
+ *
+ * Without it, the first person to notice a dead key is a recipient whose code
+ * never arrived, and they have no way to tell us.
+ *
+ * THE KEY IN THE WORKFLOW IS NOT THE KEY UNDER TEST. RESEND_API_KEY in
+ * live-journey.yml is this script's own alerting credential; the one being
+ * tested is the worker's Cloudflare secret, which nothing in CI can read. That
+ * is why this asks production instead of reading an environment variable, and
+ * why a missing key is never a reason to skip — it is the failure being
+ * looked for.
+ */
+export async function verifyCodeStep(cfg, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+  const reader = requireMailSink(VERIFY_READER);
+
+  // The precondition, asked of the database rather than assumed: PostgREST
+  // answers 400 for a column it does not know, which is exactly how a
+  // deployment older than schema/055 looks. Skipped, not failed, for the
+  // reason custom-host skips — a step that goes red because a feature is not
+  // there yet is a step the founder learns to ignore. Any OTHER error still
+  // fails: an unreachable database is not an absent feature.
+  const probe = await rest(cfg, 'GET', '/document_shares?select=verify_email&limit=1').catch(
+    (error) => error,
+  );
+  if (probe instanceof Error) {
+    // 400 and only 400: nothing else in that query can be malformed, so a 400
+    // is PostgREST saying it has no such column. A 500 or a refused connection
+    // is the database being broken, which is a FAIL like any other.
+    if (!/returned 400/.test(probe.message)) throw probe;
+    return 'SKIP verify-code — document_shares has no verify_email column; schema/055 is not deployed';
+  }
+
+  const { title, html } = journeyDocument();
+  // THE SECOND PRECONDITION, and it exists because the rollout is deliberately
+  // two steps. Everything ships with VERIFY_EMAIL_ENABLED unset, so the app
+  // refuses to CREATE a verified link — a 422 saying the installation has no
+  // mail credential configured — until the variable is turned on after the
+  // worker has been verified on production. Between those two steps this step
+  // has nothing to test, which is a skip and not a failure, for the same
+  // reason the missing column above is.
+  //
+  // Narrow on purpose: only that one refusal skips. Any other 422, and every
+  // other status, still fails — a link this journey cannot create for any
+  // other reason is news.
+  let share;
+  try {
+    share = await api(cfg, 'POST', '/api/v1/shares', {
+      html,
+      title,
+      require_email: true,
+      verify_email: true,
+      // Exactly one address, and it is the sink. A code is only ever mailed to
+      // an address the link permits, so this list is what makes a send happen
+      // at all — and it is also what stops one happening to anybody else.
+      allowed_emails: [reader],
+    });
+  } catch (error) {
+    if (/not available on this installation/.test(error.message)) {
+      return (
+        'SKIP verify-code — the app refuses to create a verified link; ' +
+        'VERIFY_EMAIL_ENABLED is not turned on yet'
+      );
+    }
+    throw error;
+  }
+  const slug = new URL(share.url).pathname.split('/').filter(Boolean).pop();
+  const notes = [];
+  try {
+    // What a real gate page sends. Every gate page is served inside an
+    // opaque-origin sandbox, so a browser posting from one sends
+    // `Origin: null` with `Sec-Fetch-Site: cross-site` — see isOwnGatePost in
+    // packages/proxy/src/auth.ts, which accepts exactly that and refuses a
+    // client that sends no Origin at all. `redirect: manual` because the
+    // PLAIN e-mail gate answers 303, and following it would hand back a
+    // healthy-looking 200 from the wrong page.
+    const posted = await fetch(`${share.url}/email`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        origin: 'null',
+        'sec-fetch-site': 'cross-site',
+      },
+      body: new URLSearchParams({ email: reader }),
+      redirect: 'manual',
+    });
+    const page = await posted.text();
+    if (posted.status !== 200 || !page.includes(`/r/${slug}/verify`)) {
+      throw new Error(
+        `the gate answered ${posted.status} without a code form — ` +
+          (posted.status === 303
+            ? 'a 303 is the plain e-mail gate letting the reader straight in, so verify_email was ' +
+              'not stored or the deployed worker predates the verified gate'
+            : 'nobody can be asked for a code on this link'),
+      );
+    }
+    notes.push(`${new URL(share.url).host} served the code page`);
+
+    // THE PAGE CANNOT TELL US ANY OF THIS, so the database has to.
+    //
+    // PROOF, NOT THE ABSENCE OF A COMPLAINT. This used to pass on a code_issued
+    // row plus fifteen quiet seconds, which is satisfied by a send that hung,
+    // a background execution that was dropped, and a failure whose own log
+    // write failed — all of them indistinguishable from a healthy run, and all
+    // of them the exact failure this step exists to catch. So the pass
+    // condition is now one positive row: `share.code_sent`, written only when
+    // the provider ACCEPTED the message (sendCodeStep in
+    // packages/proxy/src/index.ts). Its properties carry the share and the
+    // recipient's domain, never the address.
+    //
+    // The send runs after the page is answered, in ctx.waitUntil, so the row
+    // lands a moment later. Fifteen seconds in three-second reads is the
+    // window — the same order as the five the api step waits for activity, and
+    // far inside the job's ten-minute timeout — but acceptance ends the wait
+    // early, because there is nothing left to learn once it is there.
+    const watchMs = 15000;
+    const pollMs = 3000;
+    let issued = false;
+    let accepted = null;
+    for (let read = 0; read <= watchMs / pollMs && !accepted; read += 1) {
+      if (read > 0) await sleep(pollMs);
+      const rows = await rest(
+        cfg,
+        'GET',
+        `/app_events?properties->>share_id=eq.${share.share_id}` +
+          '&event=in.(share.email_submitted,share.code_sent,share.code_send_failed)' +
+          '&select=event,properties&order=timestamp.desc&limit=20',
+      );
+      const refused = rows.find((row) => row.event === 'share.code_send_failed');
+      if (refused) {
+        throw new Error(
+          `the mail provider did not accept the code (${refused.properties?.reason ?? 'no reason recorded'}) — ` +
+            'RESEND_API_KEY on the proxy worker is the thing to look at: it is a Cloudflare secret ' +
+            'on the worker, NOT the key this workflow carries, and a revoked or expired one looks ' +
+            'exactly like this while every page still answers 200',
+        );
+      }
+      const result = rows.find((row) => row.event === 'share.email_submitted')?.properties?.result;
+      // A verdict other than code_issued means no code was stored, so no send
+      // was ever started and waiting out the window proves nothing.
+      if (result && result !== 'code_issued') {
+        throw new Error(
+          `the gate recorded "${result}" rather than code_issued — no code was stored for ${slug}, ` +
+            'so nothing was sent to anybody',
+        );
+      }
+      issued ||= result === 'code_issued';
+      accepted = rows.find((row) => row.event === 'share.code_sent') ?? null;
+    }
+    if (!accepted) {
+      throw new Error(
+        `no share.code_sent row for share ${share.share_id} in ${watchMs}ms — ` +
+          (issued
+            ? 'the code was stored but the mail provider never accepted the message, so nothing ' +
+              'reached the reader. RESEND_API_KEY on the proxy worker is the thing to look at: it ' +
+              'is a Cloudflare secret on the worker, NOT the key this workflow carries, and a ' +
+              'revoked, expired or quota-exhausted one looks exactly like this while every page ' +
+              'still answers 200'
+            : 'the code page was served but nothing was recorded at all, so the worker could not ' +
+              'reach the database and a refused send would go unnoticed'),
+      );
+    }
+    notes.push(
+      `the provider accepted the code for ${accepted.properties?.email_domain ?? 'an unrecorded domain'}`,
+    );
+  } finally {
+    try {
+      await api(cfg, 'POST', `/api/v1/shares/${share.share_id}/revoke`, {});
+      notes.push('link revoked');
+    } catch (error) {
+      notes.push(`CLEANUP FAILED: ${error.message}`);
+    }
+  }
+  return notes.join('; ');
+}
+
+/**
+ * Step 5 — take yesterday's journey documents away.
  *
  * The v1 API has no delete route, so this goes at the database directly. It
  * is scoped three ways — the journey account's owner_id, a title that starts
@@ -505,6 +733,7 @@ export async function runJourney(
     'sign-in': signInStep,
     api: apiStep,
     'custom-host': customHostStep,
+    'verify-code': verifyCodeStep,
     cleanup: cleanupStep,
   },
 ) {

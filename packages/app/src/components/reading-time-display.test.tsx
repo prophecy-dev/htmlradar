@@ -87,6 +87,7 @@ const viewerReport = (startedAt = AFTER_RELEASE) =>
       sessions={[session(startedAt)]}
       events={[tinySection]}
       documentId="d1"
+      verifiedViewerIds={[]}
       toggleInternal={() => {}}
     />,
   );

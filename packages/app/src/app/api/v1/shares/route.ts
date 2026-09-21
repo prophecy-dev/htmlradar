@@ -45,6 +45,7 @@ import { createDocumentForUser } from '@/lib/create-document';
 import { validateSourceUrl } from '@/lib/html-source';
 import { deleteR2Object, r2Key } from '@/lib/r2';
 import { readQuota } from '@/lib/quota';
+import { verifiedGateEnabled } from '@/lib/verified-gate';
 import { captureServerEvent } from '@/lib/events';
 import { logServerError } from '@/lib/error-log';
 import { shareUrl } from '@/lib/share-url';
@@ -111,6 +112,7 @@ interface CreateShareBody {
   title?: unknown;
   recipient_label?: unknown;
   require_email?: unknown;
+  verify_email?: unknown;
   lock_deck?: unknown;
   password?: unknown;
   allowed_email_domains?: unknown;
@@ -269,6 +271,42 @@ export async function POST(req: NextRequest) {
   const requireEmail = body.require_email === undefined ? true : body.require_email === true;
   if (body.require_email !== undefined && typeof body.require_email !== 'boolean') {
     return errorResponse(validationError('"require_email" must be a boolean.'));
+  }
+
+  // The verified e-mail gate (schema/055). Off unless asked for, on every
+  // plan, and refused without the gate for exactly the reason the allow-list
+  // is: with the gate off nobody is asked for an address, so there is nothing
+  // to verify and the link would read as restricted while opening for anyone.
+  // The database refuses the pair as well; this is the sentence the caller can
+  // act on rather than a constraint violation.
+  if (body.verify_email !== undefined && typeof body.verify_email !== 'boolean') {
+    return errorResponse(validationError('"verify_email" must be a boolean.'));
+  }
+  // Three answers, not two. An ABSENT field is null — "I said nothing" — and
+  // the database decides (its default for a new link, and `coalesce` wherever
+  // this value is ever used to update one). Turning silence into `false` is how
+  // a caller who never mentioned verification ends up clearing it. An explicit
+  // `false` still means false.
+  const verifyEmail = body.verify_email === undefined ? null : body.verify_email === true;
+  // A deploy with no way to send a code must not accept a link that needs one:
+  // it would be created, look correct in the dashboard, and refuse every
+  // reader. Refused rather than silently downgraded, because a caller who
+  // asked for verification and got a link without it would be worse.
+  if (verifyEmail && !verifiedGateEnabled()) {
+    return errorResponse(
+      validationError(
+        'Email verification is not available on this installation, because it has no mail ' +
+          'credential configured. Create the link without "verify_email".',
+      ),
+    );
+  }
+  if (verifyEmail && !requireEmail) {
+    return errorResponse(
+      validationError(
+        '"verify_email" needs "require_email": true. With the email gate off nobody is asked ' +
+          'for an address, so there is nothing to send a code to.',
+      ),
+    );
   }
 
   // "Lock the deck": blocks save and print and paints the tiled watermark.
@@ -469,6 +507,7 @@ export async function POST(req: NextRequest) {
     p_document_id: documentId,
     p_recipient_label: stringOrNull(body.recipient_label),
     p_require_email: requireEmail,
+    p_verify_email: verifyEmail,
     p_require_password: password !== null,
     p_password_plain: password,
     p_allowed_email_domains: domains,
@@ -567,6 +606,7 @@ export async function POST(req: NextRequest) {
       document_id: documentId,
       slug: share.slug,
       require_email: requireEmail,
+      verify_email: verifyEmail,
       require_password: password !== null,
       has_domain_allowlist: !!domains,
       has_email_allowlist: !!emails,

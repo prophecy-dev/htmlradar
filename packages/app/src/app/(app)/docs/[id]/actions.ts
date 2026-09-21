@@ -9,6 +9,7 @@ import { revalidatePath } from 'next/cache';
 import { requireUser, serverClient } from '@/lib/supabase-server';
 import { captureServerEvent } from '@/lib/events';
 import { readQuota } from '@/lib/quota';
+import { verifiedGateEnabled } from '@/lib/verified-gate';
 import { issueOwnerDocPreviewToken, issueOwnerPreviewToken } from '@/lib/preview-token';
 import { deleteR2Object, r2Key, uploadAttachment, uploadHtml } from '@/lib/r2';
 import { flagIfHighScore, screenUpload } from '@/lib/create-document';
@@ -66,6 +67,39 @@ export type CreateShareError = { error: string; field?: 'slug' };
  * Once DocTabsClient/page.tsx can be touched, that prop should be deleted and
  * the wrapper with it.
  */
+/**
+ * Verification is stored only when all three are true: the e-mail gate is on,
+ * the owner asked for it, and this deploy gave the worker a way to send a code
+ * (verifiedGateEnabled). The database enforces the first of those with a CHECK
+ * constraint; the third has no database equivalent, because it is a fact about
+ * the deploy rather than about the data, so it is enforced here.
+ */
+function wantsVerification(formData: FormData): boolean {
+  return (
+    verifiedGateEnabled() &&
+    formData.get('require_email') === 'on' &&
+    formData.get('verify_email') === 'on'
+  );
+}
+
+/**
+ * The same question for an EDIT, where "absent" must mean "leave it as it is".
+ *
+ * With the capability off the form shows no verification control, so the
+ * submission carries no opinion about it — and reading that silence as `false`
+ * is how an unrelated edit (a new expiry, a fixed label) silently strips
+ * verification from a link that had it. `update_share` applies
+ * `coalesce(p_verify_email, verify_email)` (schema/055), so null is the way to
+ * say nothing and keep what is stored.
+ *
+ * Creation has no such problem and keeps a real boolean: there is nothing to
+ * preserve on a link that does not exist yet, and with the capability off the
+ * honest answer for a NEW link is false.
+ */
+function verificationEdit(formData: FormData): boolean | null {
+  return verifiedGateEnabled() ? wantsVerification(formData) : null;
+}
+
 export async function createShareFormAction(formData: FormData): Promise<CreateShareError | void> {
   const user = await requireUser();
   const supabase = serverClient();
@@ -149,6 +183,17 @@ export async function createShareFormAction(formData: FormData): Promise<CreateS
       p_allowed_emails: emails,
       p_expires_at: expiresAt,
       p_slug: chosenSlug,
+      // Only ever true alongside the gate: the checkbox is inside the gate's
+      // own reveal, so an unchecked gate submits neither field, and the
+      // database refuses the pair anyway (schema/055).
+      // Belt to the hidden toggle: the form does not offer it when this
+      // deploy cannot send, and this refuses to store it even if a crafted
+      // submission says otherwise. A link that asks for a code nobody can be
+      // sent is a link no reader can open.
+      //
+      // A real boolean and not null, unlike the edit path: a link being born
+      // has no stored setting to preserve, so false here takes nothing away.
+      p_verify_email: wantsVerification(formData),
       ...shareHostArgs(useHtmlradarHost ? { kind: 'htmlradar' } : { kind: 'default' }),
     });
     if (error) {
@@ -201,6 +246,7 @@ export async function createShareFormAction(formData: FormData): Promise<CreateS
         document_id: documentId,
         slug,
         require_email: formData.get('require_email') === 'on',
+        verify_email: wantsVerification(formData),
         require_password: requirePassword,
         has_domain_allowlist: !!domains,
         has_email_allowlist: !!emails,
@@ -418,6 +464,14 @@ export async function editShareAction(formData: FormData) {
       p_allowed_email_domains: domains,
       p_allowed_emails: emails,
       p_expires_at: expiresAt,
+      // Belt to the hidden toggle: the form does not offer it when this
+      // deploy cannot send, and this refuses to store it even if a crafted
+      // submission says otherwise. A link that asks for a code nobody can be
+      // sent is a link no reader can open.
+      //
+      // Null when the control was never shown — see verificationEdit. An edit
+      // must never be the thing that turns a customer's verification off.
+      p_verify_email: verificationEdit(formData),
     });
     if (error) throw new Error(error.message);
 
@@ -440,6 +494,9 @@ export async function editShareAction(formData: FormData) {
         share_id: shareId,
         document_id: documentId,
         require_email: formData.get('require_email') === 'on',
+        // Null means "this edit said nothing about verification", which is a
+        // different fact from "this edit turned it off".
+        verify_email: verificationEdit(formData),
         require_password: requirePassword,
         has_domain_allowlist: !!domains,
         has_email_allowlist: !!emails,

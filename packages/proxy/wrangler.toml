@@ -149,6 +149,22 @@ TRUST_HANDLES = ""
 #   SUPABASE_SERVICE_ROLE_KEY
 #   SUPABASE_ANON_KEY        (passed to tracker as data-supabase-anon-key)
 #   SESSION_SECRET           (HMAC key for password-auth cookies)
+#   RESEND_API_KEY           (the verified e-mail gate's code message)
+#   RESEND_FROM              (e.g. "HTMLRadar <hello@htmlradar.com>")
+#
+# THE TWO RESEND SECRETS ARE NEW, AND THE GATE DOES NOT WORK WITHOUT THEM.
+# They are the same two values the database already holds in Supabase Vault as
+# `resend_api_key` and `resend_from`; the worker needs its own copy because it
+# sends the code itself rather than through pg_net. See the note above
+# RESEND_API_KEY in src/env.ts for why a direct send is the only path that can
+# honour "fail closed when the provider refuses".
+#
+# SET THEM BEFORE THE DEPLOY THAT TURNS THE GATE ON, not after. A worker
+# without them refuses to mint a code and shows the reader "we could not send
+# the code" — which is the correct failure rather than an open document, but it
+# is still a link nobody can open. Until a customer switches `verify_email` on
+# for a link, their absence changes nothing: no existing link reaches that
+# code path at all.
 
 [[r2_buckets]]
 binding = "DOCS_BUCKET"

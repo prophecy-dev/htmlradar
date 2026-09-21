@@ -84,6 +84,8 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           SHARE_BASE: ${{ vars.SHARE_BASE }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          VERIFY_EMAIL_ENABLED: ${{ vars.VERIFY_EMAIL_ENABLED }}
         run: |
           set -e
           if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ]; then
@@ -96,6 +98,19 @@ jobs:
           fi
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::Repository variable CLOUDFLARE_ACCOUNT_ID is not set."
+            exit 1
+          fi
+          # The verified e-mail gate's credential, checked HERE — before
+          # anything is built or deployed — rather than at the secret-push step
+          # that needs it. Failing later would leave a freshly deployed Worker
+          # with no way to send, and every link with verification switched on
+          # would fail closed for every reader until somebody noticed.
+          #
+          # A hard failure rather than a skip, deliberately. A skipped secret is
+          # silent, and silence is exactly how a gate that cannot send reaches
+          # production looking healthy.
+          if [ -z "$RESEND_API_KEY" ]; then
+            echo "::error::Secret RESEND_API_KEY is not set on the repository. The proxy Worker needs it to send verification codes for the verified e-mail gate; without it no reader can open a link that requires verification. Set it and re-run."
             exit 1
           fi
           # SHARE_BASE is optional — fall back to the code's own default
@@ -112,6 +127,38 @@ jobs:
           # the shipped state and the safe one.
           TRUST_HANDLES=$(sed -n 's/^TRUST_HANDLES[[:space:]]*=[[:space:]]*"\(.*\)"$/\1/p' packages/proxy/wrangler.toml | head -1)
           echo "Using NEXT_PUBLIC_TRUST_HANDLES=${TRUST_HANDLES:-(off)}"
+          # Whether the application may OFFER the verified e-mail gate, which
+          # is a different question from whether the code supports it, and a
+          # different question again from whether the Worker enforces it yet.
+          #
+          # AN EXPLICIT DECISION, NOT AN INFERENCE. This used to be set to 1
+          # whenever RESEND_API_KEY existed. The key's presence says the Worker
+          # CAN be given a way to send; it says nothing about whether the
+          # Worker deployed in this run actually enforces verification — and
+          # the app reaches production before the Worker does (Astra's third
+          # finding). Inferring the switch from the secret therefore turned
+          # every deploy into "offer it now, enforce it shortly", with a window
+          # in which a freshly verified link is not enforced by anything.
+          #
+          # SO THE RELEASE IS TWO STEPS, and the variable is the second one:
+          #   1. Ship everything with VERIFY_EMAIL_ENABLED unset. The whole
+          #      feature is present and the option is hidden: no owner can
+          #      switch on a gate, so there is no link whose enforcement could
+          #      lag. Then verify on production that the Worker refuses a
+          #      verified link without a code and that the provider accepts one
+          #      (the live journey's verify-code step does both).
+          #   2. Set the repository VARIABLE VERIFY_EMAIL_ENABLED to 1 and
+          #      re-run. Only then does the option appear.
+          # Turning it back off is the rollback, and it is one variable.
+          #
+          # UNSET MEANS OFF, deliberately: the safe direction is the default,
+          # and a typo in the variable is a hidden option rather than an
+          # offered gate nothing enforces.
+          #
+          # This is a build-time flag, so it goes stale if the key is revoked
+          # afterwards. That gap is covered by the daily live journey, which
+          # asks the provider to accept a real code and fails within a day.
+          echo "Using NEXT_PUBLIC_VERIFY_EMAIL_ENABLED=${VERIFY_EMAIL_ENABLED:-(off)}"
           # Write a runner-local .env.production. This file lives only on
           # the ephemeral GitHub Actions runner — never committed to the
           # repo. Next.js auto-loads it during the build so NEXT_PUBLIC_*
@@ -122,6 +169,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
           NEXT_PUBLIC_SHARE_BASE=$SHARE_BASE
           NEXT_PUBLIC_TRUST_HANDLES=$TRUST_HANDLES
+          NEXT_PUBLIC_VERIFY_EMAIL_ENABLED=$VERIFY_EMAIL_ENABLED
           EOF
           echo "Preflight OK — .env.production written for build."
 
@@ -325,6 +373,50 @@ jobs:
           workingDirectory: packages/proxy
           command: deploy
           vars: GIT_SHA
+
+      # First deploy of the Worker (above) has to happen before secrets can be
+      # pushed — `wrangler secret put` fails against a Worker that has never
+      # existed. Same ordering as the monitor and connector steps below.
+      #
+      # WHY THE PROXY SUDDENLY NEEDS A SECRET PUSHED AT ALL. Its other four
+      # secrets are set by hand once and never change (see the comment block in
+      # packages/proxy/wrangler.toml). This one is different: it is the same
+      # Resend credential the repository already holds for the live journey, it
+      # will be rotated like any other key, and a Worker that silently lacks it
+      # locks every reader out of every link with verification switched on. So
+      # it is pushed by the deploy that needs it, from the one place it lives.
+      #
+      # NO SKIP-IF-EMPTY HERE, unlike the Pages step below. Preflight has
+      # already refused to build without RESEND_API_KEY, so an empty value at
+      # this point means something has gone wrong between the two and the right
+      # answer is to stop, not to carry on quietly.
+      #
+      # RESEND_FROM is optional and usually absent: packages/proxy/src/mail.ts
+      # defaults to the address the product already sends everything else from,
+      # so only one secret is genuinely required. Setting it here is the
+      # override for a self-hosted install or a change of sending address.
+      - name: Provision proxy Worker secrets (packages/proxy)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.preview_only) }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+        run: |
+          set -e
+          if [ -z "$RESEND_API_KEY" ]; then
+            echo "::error::Secret RESEND_API_KEY is empty at the proxy secret-push step. The verified e-mail gate cannot send codes without it; refusing to deploy a Worker that would fail closed for every reader."
+            exit 1
+          fi
+          for NAME in RESEND_API_KEY RESEND_FROM; do
+            VALUE="${!NAME}"
+            if [ -z "$VALUE" ]; then
+              echo "skip $NAME (empty; mail.ts supplies the default)"
+              continue
+            fi
+            echo "Setting Worker secret $NAME..."
+            printf '%s' "$VALUE" | npx --yes "wrangler@${WRANGLER_VERSION}" secret put "$NAME" --name htmlradar-proxy
+          done
 
       # Monitor cron worker (packages/monitor) — same pattern as the
       # proxy step. Without this step the cron monitor sits at whatever

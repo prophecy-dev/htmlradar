@@ -55,6 +55,24 @@ interface ViewerInsightsProps {
   // label under the slug ("Investor list", "Marc at Halbrook Capital"), so the
   // viewer row ties back to the same share-identity the rail uses.
   shareLabels?: Record<string, string | null>;
+  // The viewer rows whose own read proved itself through the verified e-mail
+  // gate (schema/055). An array rather than a Set because this crosses a
+  // server-to-client boundary, where a Set does not survive serialisation.
+  //
+  // VIEWER IDS AND NOT ADDRESSES. A verification is made on ONE link, at one
+  // address; the table is keyed `(share_id, email)`. Marking the address
+  // instead handed the badge to anybody who typed the same address on an
+  // ordinary sibling link of the same document, which is the badge saying the
+  // opposite of what it means.
+  //
+  // WHY THIS IS THE HONEST MARK AND THE ADDRESS ALONE IS NOT. Without the
+  // verified gate an address is whatever the reader typed, and the report has
+  // always shown it as though it were a name. The mark is the difference
+  // between "somebody typed this" and "somebody holding this mailbox opened
+  // it", which is the only part of a read report a salesperson can act on.
+  // Absent, or a viewer not in it, renders nothing at all: an unmarked row
+  // is not a claim that the reader is fake, it is the absence of a claim.
+  verifiedViewerIds: string[];
   toggleInternal: (formData: FormData) => void | Promise<void>;
 }
 
@@ -300,8 +318,17 @@ export function ViewerInsights({
   documentId,
   shareSlugs,
   shareLabels,
+  verifiedViewerIds,
   toggleInternal,
 }: ViewerInsightsProps) {
+  const verified = useMemo(() => new Set(verifiedViewerIds), [verifiedViewerIds]);
+  // A group is one reader's address across however many of this document's
+  // links they opened, so it is marked only when EVERY read behind it was
+  // verified. A group mixing a verified read with an unverified one gets no
+  // mark: the badge is a statement about this reader, and half of it being
+  // proved does not make it true. Showing nothing is not an accusation — an
+  // unmarked row has always meant "nobody claimed anything here".
+  const isVerified = (g: ViewerGroup) => g.viewerIds.every((id) => verified.has(id));
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [showAllViewers, setShowAllViewers] = useState(false);
@@ -559,6 +586,14 @@ export function ViewerInsights({
                           }
                         >
                           {g.primary}
+                          {isVerified(g) && (
+                            <span
+                              title="This reader received a code at this address and typed it back."
+                              className="ml-2 rounded border border-signal/40 bg-signal/5 px-1.5 py-0.5 align-middle font-mono text-[9.5px] uppercase tracking-[0.16em] text-signal-dark"
+                            >
+                              Verified
+                            </span>
+                          )}
                           {isHidden && (
                             <span className="ml-2 rounded border border-line bg-paper px-1.5 py-0.5 align-middle font-mono text-[9.5px] uppercase tracking-[0.16em] text-graphite">
                               Hidden

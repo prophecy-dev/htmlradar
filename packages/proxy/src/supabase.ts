@@ -17,6 +17,11 @@ export interface Share {
   recipient_label: string | null;
   require_email: boolean;
   require_password: boolean;
+  // The verified e-mail gate (schema/055). True means the address the reader
+  // types is mailed a six-digit code and the document opens only when that code
+  // comes back. Guaranteed by a CHECK in the database never to be true while
+  // require_email is false, so nothing here has to re-derive that.
+  verify_email: boolean;
   // Whole-domain allowlist: addresses at any of these domains pass the
   // gate (e.g. ['example.org'] → sarah@example.org OK).
   allowed_email_domains: string[] | null;
@@ -62,6 +67,15 @@ export interface Share {
   // Free or Pro, from the same read. Null when the profile row is missing,
   // which a left join makes possible; every caller treats that as free.
   owner_tier: 'free' | 'pro' | null;
+  // Who shared it and what it is called, for the verification code e-mail
+  // (decision 8: the subject names the document, the body names the sender as
+  // the product already shows them). Read on every request rather than fetched
+  // only when a code is sent, because they ride on a lookup that happens
+  // anyway and a second call on the gate path would cost the reader a round
+  // trip at the one moment they are waiting.
+  owner_display_name: string | null;
+  owner_email: string | null;
+  document_title: string | null;
 }
 
 export interface Document {
@@ -97,6 +111,7 @@ const SHARE_LOOKUP_COLUMNS = [
   'recipient_label',
   'require_email',
   'require_password',
+  'verify_email',
   'allowed_email_domains',
   'allowed_emails',
   'lock_deck',
@@ -105,6 +120,9 @@ const SHARE_LOOKUP_COLUMNS = [
   'host_handle',
   'owner_handle',
   'owner_tier',
+  'owner_display_name',
+  'owner_email',
+  'document_title',
   'custom_domain_id',
   'custom_domain_hostname',
   'custom_domain_state',
@@ -125,18 +143,40 @@ const SHARE_LOOKUP_COLUMNS = [
  * And the owner's tier comes back in the same row, which is why getProfileTier
  * is gone: this is now one database call where the document route made two.
  *
- * `share_lookup` is a private view — `security_invoker = off`, every grant
- * revoked from public, anon and authenticated, granted to the service role
- * alone, which is the key this worker holds. It exposes no password hash.
+ * IT IS NOW A FUNCTION, NOT THE VIEW, AND THAT IS A SAFETY INTERLOCK.
+ *
+ * The application can reach production before this worker does, and a rollback
+ * puts an older worker back in front of the same database. Either way a link
+ * with `verify_email` set would be served by a worker that does not know the
+ * flag exists, and it would open with no code — the deploy order was the only
+ * thing standing between a customer and that (Astra, finding 3).
+ *
+ * So the database refuses instead of trusting the order. `share_lookup`, the
+ * view every previous worker selects from, no longer contains verified shares
+ * at all, so an old or rolled-back worker simply finds no row and answers its
+ * standard not-found: unavailable, never open. This worker calls
+ * `share_lookup_for` and DECLARES that it enforces verification, which is the
+ * only way those rows are returned.
+ *
+ * The declaration is a promise this code keeps a few lines below, in the gate
+ * that reads `share.verify_email`. It is not a security boundary against an
+ * attacker — anyone holding the service-role key could pass true — it is an
+ * interlock against ourselves, which is what the finding was about.
+ *
+ * Still one call on the recipient's critical path, and still the private
+ * `share_lookup_all` underneath: security definer, granted to the service role
+ * alone, exposing no password hash.
  */
 export async function getShareBySlug(env: Env, slug: string): Promise<Share | null> {
-  const url = new URL(`${env.SUPABASE_URL}/rest/v1/share_lookup`);
-  url.searchParams.set('slug', `eq.${slug}`);
+  const url = new URL(`${env.SUPABASE_URL}/rest/v1/rpc/share_lookup_for`);
   url.searchParams.set('select', SHARE_LOOKUP_COLUMNS);
   url.searchParams.set('limit', '1');
 
-  const res = await call(env, url);
-  if (!res.ok) throw new UpstreamError(`share_lookup failed: ${res.status}`);
+  const res = await call(env, url, {
+    method: 'POST',
+    body: JSON.stringify({ p_slug: slug, p_supports_verification: true }),
+  });
+  if (!res.ok) throw new UpstreamError(`share_lookup_for failed: ${res.status}`);
   const rows = (await res.json()) as Share[];
   return rows[0] ?? null;
 }
@@ -375,6 +415,103 @@ export async function reportAbuse(
   // on; the caller has already checked the reason and the share exists, so
   // reaching either is a bug rather than something to explain to a reporter.
   return body?.error ? 'invalid' : 'error';
+}
+
+// The verified e-mail gate's two calls (schema/055).
+//
+// BOTH LIVE IN THE DATABASE AND NOT IN THIS WORKER, and the reason is that a
+// Worker isolate is one of many. Two requests land on two isolates, each counts
+// to one, and a limit of three is really a limit of thirty; a counter in a
+// database row is the only place the count is shared. The same goes for the
+// attempt counter, which a parallel guesser would otherwise spend twice.
+//
+// Service role, like every other write on this path, because the rate-limit
+// identity and the address are arguments and a role a stranger's script can
+// hold must not be able to supply them.
+
+/**
+ * Records a code and returns whether the limits allowed it.
+ *
+ * CALLED FOR EVERY ADDRESS, permitted or not — see handleEmailSubmit. The
+ * database does not know the allow-lists and does not ask; keeping the decision
+ * out of here is what makes the work, and therefore the time, the same for an
+ * address the link permits and one it does not (item C).
+ *
+ * `error` rather than a throw on a transport failure: the gate answers the same
+ * neutral screen for a refused code as for a rate-limited one, and a
+ * distinguishable failure at this step would be a way to tell them apart.
+ */
+export async function issueVerificationCode(
+  env: Env,
+  payload: {
+    shareId: string;
+    email: string;
+    codeHash: string;
+    challenge: string;
+    ipHash: string | null;
+    /**
+     * Whether the link permits this address.
+     *
+     * The database does not know the allow-lists and still does not ask; this
+     * is the worker TELLING it, and it changes exactly one thing: a request
+     * for an address the link does not permit must not consume that address's
+     * own budget, because otherwise five requests from anybody could lock a
+     * named reader out of a link they were never even sent (Astra, finding 5).
+     * The row is still written, so the per-network ceiling still counts it,
+     * and the work — and therefore the time — is the same either way.
+     */
+    permitted: boolean;
+  },
+): Promise<'ok' | 'rate_limited' | 'not_enabled' | 'error'> {
+  const res = await call(
+    env,
+    new URL(`${env.SUPABASE_URL}/rest/v1/rpc/issue_email_verification_code`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        p_share_id: payload.shareId,
+        p_email: payload.email,
+        p_code_hash: payload.codeHash,
+        p_challenge: payload.challenge,
+        p_ip_hash: payload.ipHash,
+        p_permitted: payload.permitted,
+      }),
+    },
+  ).catch(() => null);
+  if (!res || !res.ok) return 'error';
+  const verdict = await res.json().catch(() => null);
+  if (verdict === 'ok' || verdict === 'rate_limited' || verdict === 'not_enabled') return verdict;
+  return 'error';
+}
+
+/**
+ * Spends one attempt. 'ok' or nothing else the caller can act on.
+ *
+ * Used, expired, burnt, wrong, for another link, for another address, from
+ * another browser and never issued at all are one answer, because the reader
+ * is shown one sentence for all of them (item B). A transport failure joins
+ * them: a code the database could not be asked about has not been proved, and
+ * the gate fails closed.
+ */
+export async function checkVerificationCode(
+  env: Env,
+  payload: { shareId: string; email: string; codeHash: string; challenge: string },
+): Promise<'ok' | 'bad'> {
+  const res = await call(
+    env,
+    new URL(`${env.SUPABASE_URL}/rest/v1/rpc/check_email_verification_code`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        p_share_id: payload.shareId,
+        p_email: payload.email,
+        p_code_hash: payload.codeHash,
+        p_challenge: payload.challenge,
+      }),
+    },
+  ).catch(() => null);
+  if (!res || !res.ok) return 'bad';
+  return (await res.json().catch(() => null)) === 'ok' ? 'ok' : 'bad';
 }
 
 function call(env: Env, url: URL, init: RequestInit = {}): Promise<Response> {

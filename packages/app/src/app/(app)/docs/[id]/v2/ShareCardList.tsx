@@ -14,6 +14,7 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import { captureClientEvent } from '@/lib/events-client';
+import { verifiedGateEnabled } from '@/lib/verified-gate';
 import { createShareFormAction } from '../actions';
 import { normalizeSlugInput } from '@/lib/share-slug';
 import {
@@ -500,6 +501,8 @@ function ShareForm({
 }) {
   const [emailGate, setEmailGate] = useState(share?.require_email ?? true);
   const [passwordOn, setPasswordOn] = useState(share?.require_password ?? false);
+  const canVerify = verifiedGateEnabled();
+  const [verifyEmail, setVerifyEmail] = useState(share?.verify_email ?? false);
   const [expiryOn, setExpiryOn] = useState(!!share?.expires_at);
   // Link address (create + Pro only). Controlled so it can be lowercased as
   // the customer types and so a pasted URL can be shortened to its last
@@ -682,8 +685,33 @@ function ShareForm({
             makes sense later.
           </p>
         )}
+        {/* Verification lives INSIDE the gate's reveal, because it is the one
+            place it can be true: the option only exists while the gate is on,
+            and the database refuses the combination outright (schema/055). A
+            toggle sitting outside this block would be a switch a customer can
+            move into a state we then refuse.
+            And it is hidden entirely unless this deploy gave the worker a way
+            to send — see verifiedGateEnabled. Offering a gate that cannot mail
+            a code would lock every reader out of the link. */}
         {emailGate && (
           <div className="mt-3 ml-0 space-y-4 border-l-2 border-signal/40 bg-paper-2/30 px-4 py-3 sm:ml-2">
+            {canVerify && (
+              <>
+                <ToggleRow
+                  label="Verify the reader's email"
+                  desc="We email a six-digit code and open the document only when it comes back. Without this, anyone with the link can type any address."
+                  name="verify_email"
+                  checked={verifyEmail}
+                  onChange={setVerifyEmail}
+                />
+                {verifyEmail && share?.require_email && !share.verify_email && (
+                  <p className="rounded-md border border-line bg-paper-2/40 px-3 py-2 text-[12.5px] leading-relaxed text-graphite">
+                    Anyone already past this gate will be asked to verify the next time they open
+                    it.
+                  </p>
+                )}
+              </>
+            )}
             <FieldBlock
               label="Allowed domains"
               hint="One per line. Anyone with an email at these domains gets in. Leave blank to allow any email."

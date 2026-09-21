@@ -45,6 +45,8 @@ interface DocTabsClientProps {
   // Null means every new link is an HTMLRadar link, which is the shipped state.
   defaultDomainHostname?: string | null;
   viewers: Viewer[];
+  /** Lower-cased addresses that passed the verified e-mail gate (schema/055). */
+  verifiedViewerIds: string[];
   sessions: Session[];
   events: SectionEvent[];
   shareSlugs: Record<string, string>;
@@ -214,6 +216,7 @@ export function DocTabsClient(props: DocTabsClientProps) {
         </TabPanel>
         <TabPanel tabKey="analytics" active={activeTab === 'analytics'}>
           <AnalyticsPanel
+            verifiedViewerIds={props.verifiedViewerIds}
             documentId={props.documentId}
             viewers={props.viewers}
             sessions={props.sessions}
@@ -331,6 +334,7 @@ function SharingPanel({
 function AnalyticsPanel({
   documentId,
   viewers,
+  verifiedViewerIds,
   sessions,
   events,
   shareSlugs,
@@ -343,6 +347,7 @@ function AnalyticsPanel({
 }: {
   documentId: string;
   viewers: Viewer[];
+  verifiedViewerIds: string[];
   sessions: Session[];
   events: SectionEvent[];
   shareSlugs: Record<string, string>;
@@ -375,6 +380,7 @@ function AnalyticsPanel({
             documentId={documentId}
             shareSlugs={shareSlugs}
             shareLabels={shareLabels}
+            verifiedViewerIds={verifiedViewerIds}
             toggleInternal={toggleViewerInternalAction}
           />
           <SharesTable shares={shares} analyticsByShareId={analyticsByShareId} />

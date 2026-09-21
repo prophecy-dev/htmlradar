@@ -5,6 +5,76 @@
 //
 // Stateless — we never store gate sessions; the cookie itself is the proof
 // of having passed the gate.
+//
+// ---------------------------------------------------------------------------
+// MESSAGE AMBIGUITY: THE AUDIT, 21 September 2026.
+//
+// Astra found that two of these messages could be made identical by putting a
+// delimiter inside a field, and forged a verified cookie out of an ordinary
+// one. Everything signed here was then examined for the same class. New
+// purposes go through signPurpose (see the note above it), which cannot have
+// this problem. The formats below are UNCHANGED, because rewriting them would
+// invalidate every cookie a reader is holding and sign people out mid-visit.
+// Each is kept only because it was shown not to be reachable, and the
+// character rule each argument leans on is pinned in
+// tests/message-ambiguity.test.ts so a future widening cannot quietly undo it.
+//
+// The fields and what may appear in them:
+//   slug      `[a-z0-9-]+`, enforced by the route regex AND by
+//             validate_share_slug (schema/033). No colon, no pipe, no '@'.
+//   email     EMAIL_REGEX in index.ts is `[^\s@]+@[^\s@]+\.[^\s@]+` — it
+//             ALLOWS a colon and a pipe, and it ALWAYS contains an '@'.
+//   expiry    decimal digits only; parsed with parseInt and re-rendered from a
+//             number, so a non-numeric segment can never round-trip.
+//   hostname  a URL hostname: letters, digits, dots, hyphens. No '@'.
+//   secrets   32 lowercase hex characters (print cookie, challenges, reader).
+//   docId     `[a-f0-9-]{8,}`. No '@'.
+//
+// Pair by pair:
+//
+//   verified vs e-mail cookie — EXPLOITABLE, and this was the finding.
+//     `verified:{slug}:{email}:{exp}` against `{slug}:{email}:{exp}`. `verified`
+//     is a legal slug and the address may contain a colon, so an e-mail cookie
+//     for the link `verified` with the address `target:real@x.y` produces the
+//     verified message for `target`. FIXED: the verified cookie is the one
+//     format here that has been migrated to signPurpose, because it is new and
+//     nobody holds one yet.
+//
+//   password vs e-mail cookie — safe, and by two independent facts.
+//     `{slug}:{exp}` against `{slug}:{email}:{exp}`. To read an e-mail message
+//     as a password one the trailing segment would have to be the expiry, but
+//     it would be `{email}:{exp}`, which parseInt cannot produce from a
+//     re-rendered number. In the other direction a password message holds one
+//     colon and an e-mail message at least two, since the slug cannot supply
+//     one.
+//
+//   owner-preview and owner-doc-preview vs e-mail cookie — safe.
+//     `owner-preview:{slug}:{exp}` against an e-mail message whose slug is
+//     `owner-preview`, which is `owner-preview:{email}:{exp}`. They match only
+//     if the address equals a slug or a document id, and both of those forbid
+//     the '@' an address must contain.
+//
+//   the pipe family — print grant, opt-out token, reader id, abuse reporter —
+//     vs the colon family: safe, on one fact that covers all of them. An
+//     e-mail cookie's message ALWAYS contains an '@'. None of the fields in
+//     any pipe-delimited message can contain one: slugs, hostnames, hex
+//     secrets, document ids and connecting addresses all exclude it. So no
+//     colon-family message carrying an address can equal a pipe-family message,
+//     and the password message (which carries no address) cannot either,
+//     because every pipe-family message begins with a literal prefix that is
+//     not a legal expiry.
+//
+//   inside the pipe family: each message begins with a distinct literal
+//     (`print:`, `reader:`, `abuse-reporter:`) or, for the opt-out token, with
+//     `1|` or `0|`, which no other member can begin with.
+//
+//   the verification code hash vs the e-mail cookie — safe TODAY, by a
+//     coincidence of length, which is exactly why it was migrated anyway.
+//     The old `verify:{shareId}|{email}|{code}` could be read as an e-mail
+//     message for the slug `verify` with the address `{shareId}|{email}` —
+//     which does satisfy EMAIL_REGEX — and the code as the expiry. It fails
+//     only because a code is six digits and an expiry is ten. That is too thin
+//     a reason to rely on, so the code hash now goes through signPurpose too.
 
 const PWD_PREFIX = 'htmlradar_auth_';
 const EMAIL_PREFIX = 'htmlradar_email_';
@@ -503,10 +573,7 @@ export function readReaderCookie(cookieHeader: string | null): string | null {
 // managed to write the second. Refusing the whole name instead means the
 // worker mints a fresh identifier, so a shadowing attempt costs the attacker
 // their own planted value and tells them nothing about the reader.
-//
-// The 32-hex shape is checked here too: anything else was not minted by
-// newReaderSecret or newOptOutChallenge and is not treated as though it were.
-function readSingleHexCookie(cookieHeader: string | null, name: string): string | null {
+function readSingleCookie(cookieHeader: string | null, name: string): string | null {
   if (!cookieHeader) return null;
   let found: string | null = null;
   for (const part of cookieHeader.split(/;\s*/)) {
@@ -515,7 +582,243 @@ function readSingleHexCookie(cookieHeader: string | null, name: string): string 
     if (found !== null) return null; // more than one: trust none of them
     found = part.slice(idx + 1);
   }
+  return found;
+}
+
+// The 32-hex shape on top of that: anything else was not minted by
+// newReaderSecret, newOptOutChallenge or newVerifyChallenge and is not
+// treated as though it were.
+function readSingleHexCookie(cookieHeader: string | null, name: string): string | null {
+  const found = readSingleCookie(cookieHeader, name);
   return found && /^[0-9a-f]{32}$/.test(found) ? found : null;
+}
+
+// ---------------------------------------------------------------------------
+// THE VERIFIED E-MAIL GATE (schema/055).
+//
+// Two cookies and one hash. The design and the failure list they answer are
+// docs/workstreams/security/VERIFIED-EMAIL-GATE-BRIEF-2026-09-21.md.
+//
+// 1. THE CHALLENGE, `__Host-hr_vc`. Minted when a code is asked for, and the
+//    code in the database is bound to it, so a code read over somebody's
+//    shoulder, forwarded, or lifted out of a mailbox by a scanner cannot be
+//    spent in any browser but the one that asked. It is also the whole CSRF
+//    defence for both gate posts, for the reason the opt-out challenge above
+//    is: 128 unguessable bits an attacker can neither read (HttpOnly, and a
+//    different origin to theirs) nor set (`__Host-`, so no Domain attribute is
+//    accepted and only this exact host can write the name).
+//
+//    SameSite=None, for exactly the reason OPT_OUT_CHALLENGE_COOKIE is. Every
+//    gate page carries the opaque-origin sandbox, and a document in an opaque
+//    origin has no registrable domain, so the browser treats even a post back
+//    to the page's own host as cross-site. A Lax cookie would never arrive and
+//    every genuine verification would fail.
+//
+// 2. THE VERIFIED COOKIE, `__Host-hr_v_{slug}`. What the reader holds once the
+//    code has come back. Its shape is the e-mail cookie's, with a different
+//    message prefix so neither can be replayed as the other — and THAT is what
+//    makes decision 6 true: an ordinary e-mail cookie, however it was obtained,
+//    can never satisfy a link that requires verification, because a link that
+//    requires verification looks at this name and nothing else.
+//
+//    The name carries the slug because `__Host-` forces `Path=/`, so one name
+//    would be one cookie for the whole host and verifying on a second link
+//    would silently sign the reader out of the first.
+//
+// 3. THE CODE HASH. What the worker sends the database in place of the code.
+//    HMAC-SHA256 under SESSION_SECRET over the share, the address and the code
+//    together, so a stored hash is bound to all three: the row cannot be made
+//    to match on another link or for another address, and the database — which
+//    does not hold the key — cannot turn the hash back into the six digits.
+const VERIFY_CHALLENGE_COOKIE = '__Host-hr_vc';
+const VERIFY_CHALLENGE_TTL_SECONDS = 10 * 60;
+const VERIFIED_PREFIX = '__Host-hr_v_';
+
+export const newVerifyChallenge = newPrintSecret;
+
+export function verifyChallengeCookie(challenge: string): string {
+  return `${VERIFY_CHALLENGE_COOKIE}=${challenge}; Path=/; Max-Age=${VERIFY_CHALLENGE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`;
+}
+
+export const VERIFY_CHALLENGE_CLEAR_COOKIE = `${VERIFY_CHALLENGE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+
+export function readVerifyChallenge(cookieHeader: string | null): string | null {
+  return readSingleHexCookie(cookieHeader, VERIFY_CHALLENGE_COOKIE);
+}
+
+/** Six digits from the platform's cryptographic source, uniformly. */
+export function newVerificationCode(): string {
+  // Rejection sampling rather than `% 1000000`, which would make the first
+  // 696 codes very slightly likelier than the rest. The loop ends on the first
+  // draw better than 998 times in a thousand.
+  const bytes = new Uint32Array(1);
+  let n: number;
+  do {
+    crypto.getRandomValues(bytes);
+    n = bytes[0]!;
+  } while (n >= 4_294_000_000);
+  return String(n % 1_000_000).padStart(6, '0');
+}
+
+export async function hashVerificationCode(
+  shareId: string,
+  email: string,
+  code: string,
+  secret: string,
+): Promise<string> {
+  return signPurposeHex('verify-code-hash', [shareId, email.toLowerCase(), code], secret);
+}
+
+export async function issueVerifiedCookie(
+  slug: string,
+  email: string,
+  secret: string,
+): Promise<string> {
+  const expiresAt = Math.floor(Date.now() / 1000) + TTL_SECONDS;
+  const b64 = base64urlEncode(new TextEncoder().encode(email));
+  const mac = await signPurpose('verified-email-cookie', [slug, email, String(expiresAt)], secret);
+  return [
+    `${VERIFIED_PREFIX}${slug}=${slug}.${b64}.${expiresAt}.${mac}`,
+    'Path=/',
+    `Max-Age=${TTL_SECONDS}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+  ].join('; ');
+}
+
+export async function verifyVerifiedCookie(
+  cookieHeader: string | null,
+  slug: string,
+  secret: string,
+): Promise<VerifiedEmail | null> {
+  // Single-copy, like every other `__Host-` read in this file: a second copy
+  // of the name is a shadowing attempt, and trusting neither is what makes it
+  // worthless.
+  const raw = readSingleCookie(cookieHeader, `${VERIFIED_PREFIX}${slug}`);
+  if (!raw) return null;
+  const parts = raw.split('.');
+  if (parts.length !== 4) return null;
+  const [cookieSlug, b64email, expiryStr, mac] = parts as [string, string, string, string];
+  const expiresAt = Number.parseInt(expiryStr, 10);
+  if (cookieSlug !== slug || !Number.isFinite(expiresAt)) return null;
+  if (expiresAt < Math.floor(Date.now() / 1000)) return null;
+
+  let email: string;
+  try {
+    email = new TextDecoder().decode(base64urlDecode(b64email));
+  } catch {
+    return null;
+  }
+  const expected = await signPurpose(
+    'verified-email-cookie',
+    [slug, email, String(expiresAt)],
+    secret,
+  );
+  return constantTimeEqual(mac, expected) ? { slug, email, expiresAt } : null;
+}
+
+// ---------------------------------------------------------------------------
+// THE SIGNED FORM TOKEN, AND WHY THE CHALLENGE COOKIE ALONE WAS NOT ENOUGH
+// (Astra, finding 2).
+//
+// The challenge is `SameSite=None`, because every gate page is sandboxed into
+// an opaque origin and a Lax cookie would never come back. That also means the
+// victim's browser attaches it to a form an ATTACKER auto-submits from their
+// own sandboxed frame, which sends `Origin: null` too. So possession of the
+// cookie proved nothing: two forged posts could ask for a code to an address
+// the attacker controls and then spend it in the victim's browser, after which
+// every read carried the attacker's identity; and five forged wrong guesses
+// could burn the code the victim was waiting on.
+//
+// This is the defence the opt-out confirmation has had all along, brought
+// here: the page that renders a form also mints a token signed over the
+// challenge in that browser's cookie, and the post is refused unless the two
+// agree. An attacker can mint a token — but only over THEIR challenge, which
+// is not the one the victim's browser will send, and they can neither read nor
+// write the victim's.
+//
+// The share is in the signature so a token cannot be moved between links, and
+// the code form's token also carries the address, so a token obtained for one
+// address cannot be replayed to request or spend a code for another.
+const GATE_TOKEN_TTL_SECONDS = 10 * 60;
+
+export async function issueGateToken(
+  step: 'email' | 'code',
+  slug: string,
+  challenge: string,
+  email: string,
+  secret: string,
+): Promise<string> {
+  const expiresAt = Math.floor(Date.now() / 1000) + GATE_TOKEN_TTL_SECONDS;
+  const mac = await signPurposeHex(
+    'verify-form-token',
+    [step, slug, challenge, email, String(expiresAt)],
+    secret,
+  );
+  return `${expiresAt}.${mac}`;
+}
+
+export async function verifyGateToken(
+  token: string | null,
+  step: 'email' | 'code',
+  slug: string,
+  challenge: string | null,
+  email: string,
+  secret: string,
+): Promise<boolean> {
+  // No challenge cookie means this browser never saw the form that mints the
+  // token, so there is nothing the token could honestly be bound to.
+  if (!token || !challenge) return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [expiryStr, mac] = parts as [string, string];
+  const expiresAt = Number.parseInt(expiryStr, 10);
+  if (!Number.isFinite(expiresAt)) return false;
+  if (expiresAt < Math.floor(Date.now() / 1000)) return false;
+  const expected = await signPurposeHex(
+    'verify-form-token',
+    [step, slug, challenge, email, String(expiresAt)],
+    secret,
+  );
+  return constantTimeEqual(mac, expected);
+}
+
+/**
+ * Both gate posts have to have come from a page of ours in this browser.
+ *
+ * ITEM E OF THE BRIEF ASKS FOR THE SIGN-IN FIX'S EXACT RULE — mandatory
+ * Origin, `null` accepted only with `Sec-Fetch-Site: same-origin` — AND THAT
+ * RULE CANNOT BE APPLIED HERE. Every gate page carries the opaque-origin
+ * sandbox (see withNoIndex in index.ts), and a page in an opaque origin posts
+ * with `Origin: null` AND `Sec-Fetch-Site: cross-site`, because the browser
+ * derives "same-site" from the initiator's site and an opaque origin has none.
+ * Requiring `same-origin` would therefore refuse every genuine submission from
+ * our own page — which is the 21 September outage repeated, not avoided.
+ *
+ * SO THE RULE IS THE ONE THE OPT-OUT ALREADY USES, and it is stronger here
+ * than an Origin check would be:
+ *
+ *   * Origin is mandatory and must be `null` (our own sandboxed page) or this
+ *     host. A page at evil.com posting here sends `Origin: https://evil.com`
+ *     and is refused on that alone; a non-browser client sends none and is
+ *     refused too.
+ *   * The challenge cookie is the defence that does the work, because an
+ *     attacker CAN produce `Origin: null` by sandboxing a frame of their own.
+ *     They cannot produce the victim's challenge: it is 128 bits they cannot
+ *     read and cannot write, and the code they would be spending is bound to
+ *     it in the database.
+ *
+ * The gate pages are also served `Referrer-Policy: strict-origin` rather than
+ * `no-referrer`, which item E asks for and which costs nothing — the sandbox
+ * decides the Origin either way, and `no-referrer` is the header that took
+ * sign-in down.
+ */
+export function isOwnGatePost(request: Request, url: URL): boolean {
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  if (origin === 'null') return true;
+  return origin.toLowerCase() === url.origin.toLowerCase();
 }
 
 // The same 128 bits of randomness the print cookie carries.
@@ -567,6 +870,51 @@ function parseCookies(header: string): Record<string, string> {
     out[part.slice(0, idx)] = part.slice(idx + 1);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// ONE SIGNING HELPER, AND WHY THIS FILE NOW HAS ONE.
+//
+// THE BUG IT EXISTS TO MAKE IMPOSSIBLE (Astra, 21 September 2026, critical).
+// Every signed thing here used to build its message by joining fields with a
+// delimiter — `${slug}:${email}:${expiry}` for the e-mail cookie,
+// `verified:${slug}:${email}:${expiry}` for the verified one. Those two are the
+// same string when a field is allowed to contain the delimiter. The e-mail
+// regex permits a colon, and `verified` is a perfectly legal custom link
+// ending, so an ordinary unrestricted link called `verified`, entered with the
+// address `acme-proposal:buyer@acme.test`, produces a signature over
+// `verified:acme-proposal:buyer@acme.test:<expiry>` — byte for byte the
+// message the VERIFIED cookie for `acme-proposal` is checked against.
+// Repackaged under the verified cookie's name, the real verifier accepted it,
+// and the document and its attachments opened with no code. I reproduced it
+// with these functions before fixing it.
+//
+// THE FIX IS THE CLASS, NOT THE INSTANCE. A message is now the JSON encoding
+// of an array whose first element is the purpose. JSON escapes the quotes and
+// the separators inside every element, so no field's CONTENT can move a
+// boundary: `["verified","acme-proposal","buyer@acme.test","123"]` cannot be
+// produced by any other purpose or any other field values, because the
+// brackets and quotes are structure the fields cannot forge. Purposes are
+// distinct labels, so two purposes can never share a message even with
+// identical fields.
+//
+// Anything signed in this file should go through here. Where an OLD format is
+// still in use it is because changing it would sign every reader out mid-visit,
+// and each one carries a comment saying why its own ambiguity is not reachable,
+// with a test in tests/message-ambiguity.test.ts pinning the character rule it
+// leans on.
+type Purpose = 'verified-email-cookie' | 'verify-form-token' | 'verify-code-hash';
+
+function purposeMessage(purpose: Purpose, fields: string[]): string {
+  return JSON.stringify([purpose, ...fields]);
+}
+
+async function signPurpose(purpose: Purpose, fields: string[], secret: string): Promise<string> {
+  return hmac(purposeMessage(purpose, fields), secret);
+}
+
+async function signPurposeHex(purpose: Purpose, fields: string[], secret: string): Promise<string> {
+  return hmacHex(purposeMessage(purpose, fields), secret);
 }
 
 async function hmacBytes(message: string, secret: string): Promise<Uint8Array> {

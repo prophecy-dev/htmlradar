@@ -1,8 +1,24 @@
 # Schema
 
-Apply every numbered file directly in this folder, in ascending numeric order, starting at `001`, via the Supabase SQL Editor (or `psql`). No last file is named here on purpose — the folder grows, and a number written down goes stale the next time it does. As of this commit it ends at `054_notify_on_read_evidence.sql`. Never apply anything in `tests/` — those are destructive test programs for a scratch database only.
+Apply every numbered file directly in this folder, in ascending numeric order, starting at `001`, via the Supabase SQL Editor (or `psql`). No last file is named here on purpose — the folder grows, and a number written down goes stale the next time it does. As of this commit it ends at `055_verified_email_gate.sql`. Never apply anything in `tests/` — those are destructive test programs for a scratch database only.
 
 Two extensions are required and `001_init.sql` creates both: `pgcrypto` and `pg_net`. A third, `pg_cron`, is optional; `044` and `045` use it for scheduling and skip that step with a notice where it is absent.
+
+## Rolling out `055_verified_email_gate.sql`
+
+Apply `055` **before** deploying the recipient worker, as with every migration here. What is different about `055` is that you no longer have to be right about that, because the database enforces the order instead of trusting it.
+
+`055` splits the proxy's one recipient read into three objects. `share_lookup_all` is the full row and is granted to nobody. `share_lookup` keeps its old name, columns and service-role grant but is filtered to `where not verify_email`, so a link that requires e-mail verification is simply absent from it: a worker build that does not enforce verification — because it has not deployed yet, or because it was rolled back — finds no row and answers its ordinary not-found page. `share_lookup_for(p_slug, p_supports_verification)` is the new worker's door and returns a verified link only when the caller passes `true`. Every wrong ordering therefore ends in a closed link rather than a link that opens on a typed address alone.
+
+The practical consequences, in order:
+
+1. **Apply `055`.** Nothing changes for any existing link: `verify_email` defaults to false on every row, so `share_lookup` still contains all of them.
+2. **Deploy the worker**, which reads through `share_lookup_for(slug, true)`.
+3. **Then** let the application, the public API and the connector start offering the option. A link that gets verification turned on before step 2 stops opening; it does not open unverified.
+
+**Rollback is not symmetric, and that is deliberate.** Deploying the previous worker makes verified links stop opening, because they are invisible to it. Ordinary links are untouched. To restore service on the verified ones, roll the worker forward again or turn `verify_email` off on those shares — do not expect the old worker to serve them, because "the old worker serves them" is exactly the bypass this arrangement exists to prevent.
+
+Exercise the whole file first with `schema/tests/055_dry_run.sh --api`, which applies the migration and its tests inside one transaction that always ends in a rollback and reports through a deliberate exception. A report reading "N of N passed" is the only thing that clears `055` to be applied for real.
 
 The first nineteen files, as an illustration of the shape:
 

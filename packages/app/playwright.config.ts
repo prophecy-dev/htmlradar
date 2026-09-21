@@ -82,8 +82,38 @@ export default defineConfig({
       // "golden" parity run was quietly carrying three tests that are not
       // journeys. A testDir cannot be misread that way.
       testDir: './e2e/journeys',
+      // J11 lives in this directory and is NOT a parity journey: it runs
+      // against a local worker rather than production, so a parity record from
+      // it would compare a stub with a stub. testIgnore is what actually
+      // narrows a project on this Playwright — the note above is about
+      // testMatch, which does not.
+      testIgnore: /j11-/,
       timeout: 300_000,
       use: { ...devices['Desktop Chrome'] },
     },
+    // Journey 11, in both engines. It is the one journey that never touches
+    // production — see e2e/journeys/j11-verified-gate.spec.ts and its harness.
+    //
+    // TWO ENGINES, AND THAT IS THE POINT. The gate's challenge cookie has to be
+    // SameSite=None, because every gate page is sandboxed into an opaque origin
+    // and a Lax cookie would never come back. WebKit treats such cookies far
+    // more strictly than Chromium does, so a run in one engine proves half of
+    // what a reader needs.
+    //
+    // ignoreHTTPSErrors because `wrangler dev --local-protocol https` serves a
+    // self-signed certificate; the journey passes it on every context it opens
+    // as well, since browser.newContext() does not inherit this.
+    ...(['chromium', 'webkit'] as const).map((engine) => ({
+      name: `verified-gate-${engine}`,
+      testDir: './e2e/journeys',
+      testMatch: /j11-/,
+      // Standing up a worker and a stub is about twenty seconds of the first
+      // test, and five browser cases follow it.
+      timeout: 180_000,
+      use: {
+        ...devices[engine === 'chromium' ? 'Desktop Chrome' : 'Desktop Safari'],
+        ignoreHTTPSErrors: true,
+      },
+    })),
   ],
 });

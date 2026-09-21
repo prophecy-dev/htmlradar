@@ -14,6 +14,7 @@
 //   GET  /r/{slug}            serves the document, gates as needed
 //   POST /r/{slug}/auth       password submission
 //   POST /r/{slug}/email      email submission for allow-list shares
+//   POST /r/{slug}/verify     the six-digit code, on a link that asks for one
 //   GET  /r/{slug}/report     the recipient's abuse report form
 //   POST /r/{slug}/report     the report itself
 //   GET  /r/{slug}/frame      the document, inside the trust wrapper's frame
@@ -72,6 +73,8 @@ import {
   getViewerIdByShareEmail,
   verifySharePassword,
   notifyDisabledAttempt,
+  issueVerificationCode,
+  checkVerificationCode,
   UpstreamError,
   type Attachment,
   type Share,
@@ -100,6 +103,17 @@ import {
   verifyOwnerDocPreviewToken,
   verifyOwnerPreviewToken,
   verifyPrintGrant,
+  hashVerificationCode,
+  isOwnGatePost,
+  issueGateToken,
+  verifyGateToken,
+  issueVerifiedCookie,
+  newVerificationCode,
+  newVerifyChallenge,
+  readVerifyChallenge,
+  verifyChallengeCookie,
+  verifyVerifiedCookie,
+  VERIFY_CHALLENGE_CLEAR_COOKIE,
   OPT_OUT_CHALLENGE_CLEAR_COOKIE,
   OPT_OUT_CLEAR_COOKIES,
   OPT_OUT_COOKIE,
@@ -119,11 +133,79 @@ import {
   reportSent,
   revoked,
   sourceUnreachable,
+  verifyCodeForm,
   NOTE_MAX_LENGTH,
   REPORT_REASONS,
 } from './responses.js';
+import { sendVerificationCode } from './mail.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// THE TIMING FLOOR, and what it is for NOW.
+//
+// It used to hide the mail provider. The first draft awaited the send inside
+// this floor, which bought two problems and the orchestrator rejected both: a
+// send slower than the floor made the permitted path measurably slower, and a
+// refused send produced a page that existed only on the permitted path. Either
+// one answers "is this address on the list?", which is the single question
+// this gate must never answer.
+//
+// THE SEND NO LONGER BLOCKS THE REPLY. It runs in ctx.waitUntil, after the
+// response has gone (see sendCodeStep), so the reader is answered at the same
+// moment whether a message follows or not, and there is no send-failure page
+// left to be a tell. What is left inside the floor is the database call, and
+// BOTH paths make that identical call — schema/055's issue function does not
+// know the allow-list and is not asked (test N).
+//
+// So the floor's job is now narrow: it flattens whatever residual asymmetry
+// the in-memory allow-list scan and the waitUntil registration could add, and
+// it is insurance against a future edit putting real work back on one branch
+// only.
+//
+// MEASURED, NOT GUESSED. Two numbers, taken 21 September 2026:
+//
+//   * End to end through this handler with the floor removed, against the
+//     local harness: 2.3ms median for a permitted address and 1.8ms for a
+//     refused one, over 25 pairs. The refused path's own maximum was the
+//     higher of the two, so what is left between the branches is noise rather
+//     than signal — which is the point of moving the send out.
+//   * One real PostgREST round trip to the production database, which is the
+//     only thing still under the floor: 65ms median, with one 663ms outlier
+//     in fifteen. Taken from a laptop, so it is a pessimistic stand-in for a
+//     worker sitting much closer to the database.
+//
+// 750 sits above even that outlier, so in practice every reader is answered at
+// the same moment on the clock rather than at a moment that varies with the
+// database. It is worth saying that the floor being exceeded would no longer
+// be a leak — both branches make the identical call, so a slow database slows
+// them equally — but a constant answer is a stronger property than an equal
+// one, and three-quarters of a second, once, is a price a reader will not
+// notice.
+const GATE_FLOOR_MS = 750;
+// The floor a run actually uses. Production leaves the var unset and gets the
+// number above; the unit suite and `wrangler dev` set it to 0, because waiting
+// is the one behaviour on this path that has no meaning without a network
+// between the two ends, and paying for it on every assertion buys nothing.
+const gateFloorMs = (env: Env): number => {
+  const raw = Number.parseInt(env.GATE_FLOOR_MS ?? '', 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : GATE_FLOOR_MS;
+};
+// Checking a code touches no third party, so this floor exists only to flatten
+// the difference between "no such code" and "wrong code" — which the database
+// function already equalises by doing the same comparison work either way. Kept
+// small: it is belt to that brace, not the defence.
+const VERIFY_FLOOR_MS = 250;
+// How long the provider gets before the send is called a failure. Generous
+// enough that a slow but working provider is not written off, short enough
+// that a hung connection cannot sit inside waitUntil until the worker is torn
+// down with nothing recorded either way.
+const SEND_TIMEOUT_MS = 10_000;
+
+/** Waits until `ms` have passed since `started`. Returns at once if they have. */
+async function padTo(started: number, ms: number): Promise<void> {
+  const left = ms - (Date.now() - started);
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+}
 
 // Defaults, so `wrangler dev` and the tests behave without configuration.
 // Production values are the [vars] block in wrangler.toml.
@@ -710,7 +792,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return handleAttachmentDownload(request, slug, attachmentId, host, env);
   }
 
-  const match = /^\/r\/([a-z0-9-]+)(?:\/(auth|email|report|frame|print))?\/?$/i.exec(url.pathname);
+  const match = /^\/r\/([a-z0-9-]+)(?:\/(auth|email|verify|report|frame|print))?\/?$/i.exec(
+    url.pathname,
+  );
   if (!match) return new Response('Not Found', { status: 404 });
   // Lowercased rather than redirected to the canonical form. Every stored
   // slug is lowercase (the format is enforced by the validate_share_slug
@@ -860,7 +944,15 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   }
   if (subroute === 'email') {
     if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
-    return handleEmailSubmit(request, share, env);
+    return handleEmailSubmit(request, share, url, env, ctx);
+  }
+  // The second step of the verified gate. It exists only on a link that asks
+  // for one: on any other, it is the standard not-found, so the route says
+  // nothing about a share's settings to somebody probing for it.
+  if (subroute === 'verify') {
+    if (!share.require_email || !share.verify_email) return notFound();
+    if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+    return handleVerifySubmit(request, share, url, env);
   }
 
   // Gate sequence: password (if required) → email (if allow-listed) → content.
@@ -895,10 +987,28 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   //   When the proxy gate fires, the tracker's in-doc gate stays off
   //   because injectTracker sees `email` already set in the config
   //   (gate.enabled = require_email && !email = false).
+  //
+  // AND WHEN THE LINK ASKS FOR A VERIFIED ADDRESS (schema/055), THE COOKIE IT
+  // LOOKS AT IS A DIFFERENT ONE. `__Host-hr_v_{slug}` is issued only by the
+  // code step, so an ordinary e-mail cookie — however the reader came by it,
+  // including by having passed this gate yesterday before the owner turned the
+  // option on — cannot satisfy this branch. That is decision 6: turning the
+  // option on makes readers who are already past the gate verify at their next
+  // open, with no migration step and no action by the owner.
+  //
+  // ONE BRANCH, SO EVERY PATH BEHIND THE GATE INHERITS IT. The document, the
+  // frame, print and — in handleAttachmentDownload, which repeats this same
+  // pair — the attachment route all decide here. There is no second place a
+  // future route could be added and miss it (item H).
   let verifiedEmail: string | undefined;
   if (share.require_email && !isOwnerPreview) {
-    const cookie = await verifyEmailCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET);
-    if (!cookie) return framed ? notFound() : emailGateForm(slug);
+    const cookie = share.verify_email
+      ? await verifyVerifiedCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET)
+      : await verifyEmailCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET);
+    if (!cookie) {
+      if (framed) return notFound();
+      return share.verify_email ? verifiedEmailGate(request, slug, env) : emailGateForm(slug);
+    }
     // Re-check the cookie's email against
     // the share's CURRENT allowlist on every request — not just at
     // gate-submission time. If the sender tightened the allowlist
@@ -909,9 +1019,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // (so vanilla require_email shares keep working), and for the
     // owner-preview path which already short-circuits above.
     if (!isEmailAllowed(share, cookie.email)) {
-      return framed
-        ? notFound()
-        : emailGateForm(slug, 'This document is no longer shared with your address.');
+      if (framed) return notFound();
+      const stale = 'This document is no longer shared with your address.';
+      return share.verify_email
+        ? verifiedEmailGate(request, slug, env, stale)
+        : emailGateForm(slug, stale);
     }
     verifiedEmail = cookie.email;
   }
@@ -1018,6 +1130,32 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     ...(geo && Object.keys(geo).length > 0 ? { geo } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   });
+}
+
+/**
+ * The address step on a link that asks for a verified address.
+ *
+ * Minting the challenge HERE, on the page that shows the form, is what makes
+ * the signed token possible: the token is signed over the challenge this
+ * browser is about to hold, so a post arriving without both is refused. The
+ * plain e-mail gate is untouched — it has no token and no challenge, because
+ * it is not a step an attacker gains anything by forging.
+ *
+ * The challenge is reused when the browser already holds one, so two tabs on
+ * the same link do not invalidate each other's pending code.
+ */
+async function verifiedEmailGate(
+  request: Request,
+  slug: string,
+  env: Env,
+  error?: string,
+): Promise<Response> {
+  const existing = readVerifyChallenge(request.headers.get('cookie'));
+  const challenge = existing ?? newVerifyChallenge();
+  const token = await issueGateToken('email', slug, challenge, '', env.SESSION_SECRET);
+  const res = emailGateForm(slug, error, token);
+  res.headers.append('Set-Cookie', verifyChallengeCookie(challenge));
+  return res;
 }
 
 /**
@@ -1193,7 +1331,13 @@ async function handleReportSubmit(request: Request, share: Share, env: Env): Pro
   return reportSent();
 }
 
-async function handleEmailSubmit(request: Request, share: Share, env: Env): Promise<Response> {
+async function handleEmailSubmit(
+  request: Request,
+  share: Share,
+  url: URL,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
   const form = await request.formData();
   const gateEvent = (result: string, domain: string | null) =>
     logAppEvent(env, share.owner_id, 'share.email_submitted', {
@@ -1203,6 +1347,7 @@ async function handleEmailSubmit(request: Request, share: Share, env: Env): Prom
       email_domain: domain,
       share_id: share.id,
       document_id: share.document_id,
+      verified_gate: share.verify_email,
     });
   const raw = form.get('email');
   if (typeof raw !== 'string') return emailGateForm(share.slug, 'Email is required.');
@@ -1212,6 +1357,48 @@ async function handleEmailSubmit(request: Request, share: Share, env: Env): Prom
     return emailGateForm(share.slug, 'Please enter a valid email address.');
   }
   const domain = email.split('@')[1] ?? null;
+
+  // THE ORIGIN CHECK IS ON THE VERIFICATION POSTS AND ON THOSE ALONE (item E).
+  //
+  // It belongs here rather than at the top of this handler because the plain
+  // e-mail gate is not one of the two gate posts the brief names, and putting
+  // it there changed a posture nobody asked to change: a forged submission to
+  // the plain gate sets a cookie carrying an address of the attacker's
+  // choosing in a victim's browser, which is the behaviour that has shipped
+  // since the gate existed and is not this lane's to alter. Tightening it also
+  // broke three existing tests, which is the shape of an unrequested change.
+  //
+  // On THIS path a forged submission would spend a victim's rate-limit budget
+  // and put a code in their inbox, so it is refused. The check is only the
+  // first of two: see isOwnGatePost for why the challenge cookie is the half
+  // that does the work.
+  if (share.verify_email) {
+    if (!isOwnGatePost(request, url)) {
+      return verifiedEmailGate(request, share.slug, env, "That didn't come from this page.");
+    }
+    // THE SIGNED FIELD, AND IT IS CHECKED BEFORE ANYTHING IS SPENT. A forged
+    // post carries the victim's challenge cookie — SameSite=None sends it —
+    // but can only carry a token the attacker signed over THEIR challenge, so
+    // the two disagree and nothing happens: no code is stored, no message is
+    // sent, no budget is consumed. Returning here rather than after the
+    // database call is what makes that true (Astra, finding 2).
+    const ok = await verifyGateToken(
+      typeof form.get('t') === 'string' ? (form.get('t') as string) : null,
+      'email',
+      share.slug,
+      readVerifyChallenge(request.headers.get('cookie')),
+      '',
+      env.SESSION_SECRET,
+    );
+    if (!ok) {
+      await gateEvent('forged_or_stale_form', domain);
+      // A fresh pair rather than a dead end: the common cause is a form left
+      // open past the token's ten minutes, not an attack.
+      return verifiedEmailGate(request, share.slug, env, 'That form expired. Try again.');
+    }
+    return sendCodeStep(request, share, email, domain, gateEvent, env, ctx);
+  }
+
   // Allowlist check happens here (post-format-validation) because we
   // need the full address to test both lists. Union semantics: if any
   // list is set, the address must match SOMETHING in at least one.
@@ -1227,6 +1414,272 @@ async function handleEmailSubmit(request: Request, share: Share, env: Env): Prom
       'Set-Cookie': await issueEmailCookie(share.slug, email, env.SESSION_SECRET),
     },
   });
+}
+
+/**
+ * Step one of the verified gate: mint a code, record it, and — only for an
+ * address the link permits — mail it.
+ *
+ * READ THE ORDER, because the order is the anti-enumeration property.
+ *
+ * The database call happens for EVERY address, permitted or not. It is the
+ * expensive half of this handler, it counts the same limits either way, and
+ * running it unconditionally is what keeps a refused address from being the
+ * fast one. The allow-list decision is made here, in memory, off a share we
+ * already hold, and its only consequence is whether a message is sent —
+ * which is a fact in a mailbox and not a fact on this screen (decision 2).
+ *
+ * THE LIMITS SPEND EITHER WAY, deliberately. An attacker walking a list of
+ * addresses to see which ones are on the allow-list exhausts the per-network
+ * ceiling on addresses that receive nothing, which is the behaviour we want.
+ *
+ * THE CHALLENGE IS REUSED WHEN THE BROWSER ALREADY HAS ONE. A fresh one on
+ * every request would strand the code the reader is holding: the database
+ * binds a code to the challenge, and a new challenge means the old code can
+ * no longer be looked up. Reusing it is also what lets the database retire
+ * the previous code when a second one is asked for, so one browser has one
+ * live code and five guesses, not three codes and fifteen.
+ */
+async function sendCodeStep(
+  request: Request,
+  share: Share,
+  email: string,
+  domain: string | null,
+  gateEvent: (result: string, domain: string | null) => Promise<void>,
+  env: Env,
+  // Threaded from the fetch handler rather than left absent. The send outlives
+  // the response and something has to keep the worker alive for it; this is
+  // the same mechanism the disabled-link alert already uses.
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const started = Date.now();
+  const existing = readVerifyChallenge(request.headers.get('cookie'));
+  const challenge = existing ?? newVerifyChallenge();
+  const code = newVerificationCode();
+  const codeHash = await hashVerificationCode(share.id, email, code, env.SESSION_SECRET);
+  // The same hashed identity an abuse report is rate-limited by: the raw
+  // address never leaves this worker, and the database stores an opaque string
+  // it cannot walk back without a key it does not hold.
+  const ipHash = await hashReporterAddress(
+    request.headers.get('CF-Connecting-IP') ?? '',
+    env.SESSION_SECRET,
+  );
+
+  // WHETHER THE LINK PERMITS THIS ADDRESS is decided here, in memory, off a
+  // share already in hand — and it is passed to the database rather than kept
+  // to ourselves. It changes nothing about the work done or the answer given;
+  // it only stops a request for an address the link does not permit spending
+  // that address's own budget (Astra, finding 5).
+  const permitted = isEmailAllowed(share, email);
+  const verdict = await issueVerificationCode(env, {
+    shareId: share.id,
+    email,
+    codeHash,
+    challenge,
+    ipHash,
+    permitted,
+  });
+
+  // THE SEND HAPPENS AFTER THE ANSWER. ctx.waitUntil keeps the worker alive
+  // until it finishes, so nothing is dropped, but the reader is not waiting on
+  // it and therefore cannot be told anything by how long they waited.
+  //
+  // THIS IS STILL FAILING CLOSED. Failing closed means the document does not
+  // open, and it does not: the only thing that opens it is a correct code, and
+  // a code that was never delivered is a code nobody can type. What changed is
+  // that we no longer ANNOUNCE the failure to whoever is standing at the gate,
+  // because the announcement was itself the leak. The failure is recorded
+  // instead, with its reason, where the people who can fix it will see it —
+  // and the daily live journey fails within a day if the provider is refusing
+  // us (packages/app/scripts/live-journey.mjs).
+  if (verdict === 'ok' && permitted) {
+    ctx.waitUntil(
+      (async () => {
+        // TIMED OUT, because a hung send is indistinguishable from a slow one
+        // and the daily journey must not be able to pass on either. Whichever
+        // settles first decides; a timeout is recorded as a failure like any
+        // other refusal.
+        const ok = await Promise.race([
+          sendVerificationCode(env, {
+            to: email,
+            code,
+            documentTitle: share.document_title ?? 'a document',
+            // The owner as the product already shows them, and their address
+            // only if there is no name — the same fallback the first-open
+            // e-mail uses.
+            sender: share.owner_display_name ?? share.owner_email ?? 'Someone',
+            // The host the reader is actually on, so a custom domain and a
+            // handle host each name themselves (item G).
+            host: request.headers.get('host') ?? shareHostOf(env),
+          }),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), SEND_TIMEOUT_MS)),
+        ]);
+        if (ok) {
+          // THE POSITIVE EVENT, and the reason it exists (Astra, finding 8).
+          // The daily journey used to pass on "a code was issued and no
+          // failure was logged within fifteen seconds", which a hung send, a
+          // dropped background task or a failed failure-write all satisfy.
+          // Only this row means the provider actually took the message, so
+          // the journey can require it rather than infer it from silence.
+          // Domain only, never the address: the same hygiene rule the gate
+          // events follow.
+          await logAppEvent(env, share.owner_id, 'share.code_sent', {
+            email_domain: domain,
+            share_id: share.id,
+            document_id: share.document_id,
+          });
+        } else {
+          await logAppEvent(env, share.owner_id, 'share.code_send_failed', {
+            // sendVerificationCode collapses every failure to false on
+            // purpose — the reader is told the same thing for all of them —
+            // so what is recordable here is that the provider did not accept
+            // it, plus whether we even had a credential to try with. That
+            // second fact is the one worth separating: "not configured" is a
+            // deploy mistake and "refused" is an account problem, and they
+            // are fixed by different people.
+            reason: env.RESEND_API_KEY ? 'provider_refused' : 'no_credential',
+            email_domain: domain,
+            share_id: share.id,
+            document_id: share.document_id,
+          });
+        }
+      })(),
+    );
+  }
+
+  // `code_issued` means a code was stored and, for a permitted address, a send
+  // was started. Whether it arrived is the event above, not this one.
+  await gateEvent(verdict === 'ok' ? 'code_issued' : `code_${verdict}`, domain);
+
+  // Both paths leave here at the same moment on the clock. See GATE_FLOOR_MS.
+  await padTo(started, gateFloorMs(env));
+
+  // ONE PAGE FOR EVERY OUTCOME, INCLUDING OVER THE LIMIT (decision 5d), and
+  // this last part was a leak of its own until Astra's finding 5 was fixed.
+  // The over-limit reply used to carry an extra line. Once a NON-permitted
+  // address stopped consuming its own budget — which is what stops five
+  // requests from anybody locking a named reader out — only a permitted
+  // address could ever see that line, so the line itself answered the question
+  // this gate exists not to answer. It is gone. The page's own sentence, "it
+  // can take a minute to arrive; if nothing comes, ask for another code", is
+  // true for somebody over their limit as well, and it is the same words
+  // everybody else reads.
+  const res = verifyCodeForm(
+    share.slug,
+    email,
+    await issueGateToken('code', share.slug, challenge, email, env.SESSION_SECRET),
+  );
+  // SET IT WHENEVER A CODE WAS STORED, new challenge or not (Astra, finding
+  // 9). The cookie and the code used to age independently: a reader who asked
+  // for a second code at minute nine reused a challenge expiring at minute ten
+  // and was handed a code good until minute nineteen, so the code they had
+  // just been sent became unusable a minute later. Re-sending the same value
+  // restarts its ten minutes alongside the code it is bound to.
+  //
+  // Still NEVER on a refused request: overwriting or extending a live challenge
+  // when nothing was stored would throw away the working code the reader is
+  // already holding.
+  if (verdict === 'ok') {
+    res.headers.append('Set-Cookie', verifyChallengeCookie(challenge));
+  }
+  return res;
+}
+
+/**
+ * Step two: the code comes back.
+ *
+ * EVERY WAY OF BEING WRONG IS ONE SENTENCE. A used code, an expired one, one
+ * burnt by five wrong guesses, a code for another link, for another address or
+ * from another browser, a missing challenge cookie, a code that is not six
+ * digits, and a database we could not reach are all "that code is not right"
+ * (item B). The branch that could tell them apart does not exist here, and the
+ * database function it calls does not return the distinction in the first
+ * place.
+ *
+ * TWO COOKIES ON SUCCESS. The verified one is what this link now looks at; the
+ * ordinary e-mail one rides along so that an owner who later turns the option
+ * off does not silently sign every admitted reader out. Turning it back ON
+ * still forces verification, because the branch that decides looks only at the
+ * verified name.
+ */
+async function handleVerifySubmit(
+  request: Request,
+  share: Share,
+  url: URL,
+  env: Env,
+): Promise<Response> {
+  if (!isOwnGatePost(request, url)) {
+    return verifiedEmailGate(request, share.slug, env, "That didn't come from this page.");
+  }
+  const form = await request.formData();
+  const rawEmail = form.get('email');
+  const rawCode = form.get('code');
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+  const code = typeof rawCode === 'string' ? rawCode.trim() : '';
+  if (!EMAIL_REGEX.test(email)) {
+    return emailGateForm(share.slug, 'Please enter a valid email address.');
+  }
+
+  const challenge = readVerifyChallenge(request.headers.get('cookie'));
+  // BEFORE AN ATTEMPT IS SPENT. Five forged wrong guesses used to burn the
+  // code a victim was waiting on; they cannot now, because a forged post never
+  // reaches the database at all. The token is bound to the address as well as
+  // the browser, so one obtained for one address cannot spend another's
+  // attempts either.
+  const tokenOk = await verifyGateToken(
+    typeof form.get('t') === 'string' ? (form.get('t') as string) : null,
+    'code',
+    share.slug,
+    challenge,
+    email,
+    env.SESSION_SECRET,
+  );
+  if (!tokenOk) {
+    await logAppEvent(env, share.owner_id, 'share.code_submitted', {
+      result: 'forged_or_stale_form',
+      email_domain: email.split('@')[1] ?? null,
+      share_id: share.id,
+      document_id: share.document_id,
+    });
+    return verifiedEmailGate(request, share.slug, env, 'That form expired. Try again.');
+  }
+
+  const started = Date.now();
+  const verdict =
+    challenge && /^[0-9]{6}$/.test(code)
+      ? await checkVerificationCode(env, {
+          shareId: share.id,
+          email,
+          codeHash: await hashVerificationCode(share.id, email, code, env.SESSION_SECRET),
+          challenge,
+        })
+      : 'bad';
+
+  await logAppEvent(env, share.owner_id, 'share.code_submitted', {
+    result: verdict,
+    email_domain: email.split('@')[1] ?? null,
+    share_id: share.id,
+    document_id: share.document_id,
+  });
+  await padTo(started, Math.min(VERIFY_FLOOR_MS, gateFloorMs(env)));
+
+  if (verdict !== 'ok') {
+    return verifyCodeForm(
+      share.slug,
+      email,
+      await issueGateToken('code', share.slug, challenge!, email, env.SESSION_SECRET),
+      'That code is not right. Check the email and try again.',
+      401,
+    );
+  }
+
+  const headers = new Headers({ Location: `/r/${share.slug}` });
+  headers.append('Set-Cookie', await issueVerifiedCookie(share.slug, email, env.SESSION_SECRET));
+  headers.append('Set-Cookie', await issueEmailCookie(share.slug, email, env.SESSION_SECRET));
+  // Spend the challenge. The code it was bound to is already marked used; the
+  // next code this browser asks for gets a challenge of its own.
+  headers.append('Set-Cookie', VERIFY_CHALLENGE_CLEAR_COOKIE);
+  return new Response(null, { status: 303, headers });
 }
 
 // Combined allowlist check. Returns true when:
@@ -1290,7 +1743,13 @@ async function handleAttachmentDownload(
   }
   let recipientEmail: string | null = null;
   if (share.require_email) {
-    const cookie = await verifyEmailCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET);
+    // The same pair the document route decides on: a link that requires a
+    // verified address accepts the verified cookie and nothing else here
+    // either. Without this line the attachments would be the way round the
+    // whole gate (item H).
+    const cookie = share.verify_email
+      ? await verifyVerifiedCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET)
+      : await verifyEmailCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET);
     if (!cookie) return notFound();
     // Same fresh-allowlist check as the doc-serve path. A
     // stale email cookie must NOT bypass a tightened allowlist on the

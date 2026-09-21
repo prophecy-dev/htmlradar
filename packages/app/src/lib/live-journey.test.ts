@@ -18,9 +18,15 @@ const scriptUrl = new URL('../../scripts/live-journey.mjs', import.meta.url).hre
 const scriptPath = fileURLToPath(scriptUrl);
 
 // A variable specifier, so `tsc` leaves the untyped .mjs alone.
-const { signInStep, cleanupStep, customHostStep, runJourney, parseForm } = await import(
-  /* @vite-ignore */ scriptPath
-);
+const {
+  signInStep,
+  cleanupStep,
+  customHostStep,
+  verifyCodeStep,
+  requireMailSink,
+  runJourney,
+  parseForm,
+} = await import(/* @vite-ignore */ scriptPath);
 
 const cfg = {
   baseUrl: 'https://htmlradar.com',
@@ -484,6 +490,214 @@ describe('customHostStep', () => {
 
     expect(report).toBe('SKIP custom-host — no live domain on the journey account');
     expect(firstFailure).toBe(null);
+  });
+});
+
+// The verified gate answers the same neutral page whether the code was sent or
+// the provider refused it, so the evidence has to come from the worker's own
+// record: a share.code_sent row written when the provider ACCEPTED the message.
+// These pin the three halves: that the step posts as a sandboxed gate page
+// does, that acceptance is required rather than merely not-refused, and that a
+// refusal is a FAIL whose message names the Resend key.
+describe('verifyCodeStep', () => {
+  const SHARE_URL = 'https://htmlradar.page/r/quick-glass';
+  const READER = 'delivered+verify-journey@resend.dev';
+  const codePage = `<h1>Check your email.</h1><form method="POST" action="/r/quick-glass/verify"></form>`;
+  const ISSUED = { event: 'share.email_submitted', properties: { result: 'code_issued' } };
+  const SENT = {
+    event: 'share.code_sent',
+    properties: { share_id: 'share-1', email_domain: 'resend.dev' },
+  };
+
+  /**
+   * PostgREST answers the column probe and the events query; the API answers
+   * the share creation and the revoke; the content domain answers the gate
+   * post. `events` is what app_events holds, `gate` overrides the gate's
+   * answer, and `probe` stands in for a database that has never heard of
+   * verify_email.
+   */
+  function stubVerify({
+    events = [ISSUED, SENT],
+    gate = { status: 200, body: codePage },
+    probe = '[]',
+    create,
+  }: {
+    events?: unknown[];
+    gate?: { status: number; body: string };
+    probe?: string | { status: number; body: string };
+    /** Overrides the app's answer when the step tries to create the link. */
+    create?: { status: number; body: string };
+  } = {}) {
+    const calls: string[] = [];
+    const sent: Sent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      (target: string | URL, init?: { method?: string; headers?: Record<string, string> }) => {
+        const url = String(target);
+        calls.push(`${init?.method ?? 'GET'} ${url}`);
+        sent.push({
+          method: init?.method ?? 'GET',
+          url,
+          headers: init?.headers ?? {},
+          body: String((init as { body?: unknown })?.body ?? ''),
+        });
+        const body = (value: unknown) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(value)),
+          });
+        if (url.includes('/rest/v1/document_shares')) {
+          return typeof probe === 'string'
+            ? Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(probe) })
+            : Promise.resolve({
+                ok: false,
+                status: probe.status,
+                text: () => Promise.resolve(probe.body),
+              });
+        }
+        if (url.includes('/rest/v1/app_events')) return body(events);
+        if (url.endsWith('/api/v1/shares')) {
+          return create
+            ? Promise.resolve({
+                ok: false,
+                status: create.status,
+                text: () => Promise.resolve(create.body),
+              })
+            : body({ share_id: 'share-1', url: SHARE_URL });
+        }
+        if (url.includes('/revoke')) return body({ ok: true });
+        return Promise.resolve({
+          ok: gate.status === 200,
+          status: gate.status,
+          text: () => Promise.resolve(gate.body),
+        });
+      },
+    );
+    return { calls, sent };
+  }
+
+  /** No real waiting: the step takes its sleep as an argument for this. */
+  const run = () => verifyCodeStep(cfg, () => Promise.resolve());
+
+  it('SKIPS while the two-step rollout is halfway, rather than going red', async () => {
+    // Everything ships with VERIFY_EMAIL_ENABLED unset, so the API refuses to
+    // create a verified link until the variable is turned on after the worker
+    // has been verified on production. There is nothing to test in between,
+    // and a step that goes red for that reason is a step the founder learns to
+    // ignore — which would cost us the one check that catches a dead key.
+    stubVerify({
+      create: {
+        status: 422,
+        body: JSON.stringify({
+          error: 'validation_error',
+          message:
+            'Email verification is not available on this installation, because it has no mail ' +
+            'credential configured. Create the link without "verify_email".',
+        }),
+      },
+    });
+    const note = await run();
+    expect(note).toMatch(/^SKIP verify-code/);
+    expect(note).toContain('VERIFY_EMAIL_ENABLED');
+  });
+
+  it('still FAILS on any other refusal from the create call', async () => {
+    // Narrow on purpose: a link this journey cannot create for any other
+    // reason is news, not a skip.
+    stubVerify({
+      create: { status: 402, body: JSON.stringify({ error: 'free_limit_reached' }) },
+    });
+    await expect(run()).rejects.toThrow();
+  });
+
+  it('creates a verified link for the sink address and passes when the provider accepted it', async () => {
+    const { calls, sent } = stubVerify();
+    await expect(run()).resolves.toContain('the provider accepted the code for resend.dev');
+    const created = sent.find((call) => call.url.endsWith('/api/v1/shares'));
+    expect(JSON.parse(created?.body ?? '{}')).toMatchObject({
+      require_email: true,
+      verify_email: true,
+      allowed_emails: [READER],
+    });
+    expect(calls.at(-1)).toContain('/api/v1/shares/share-1/revoke');
+  });
+
+  // The proxy refuses a gate post that carries no Origin, and every gate page
+  // is sandboxed into an opaque origin, so `null` is what a browser sends.
+  it('posts the address the way a sandboxed gate page does', async () => {
+    const { sent } = stubVerify();
+    await run();
+    const post = sent.find((call) => call.url === `${SHARE_URL}/email`);
+    expect(post?.headers['origin']).toBe('null');
+    expect(post?.headers['sec-fetch-site']).toBe('cross-site');
+    expect(post?.body).toBe('email=delivered%2Bverify-journey%40resend.dev');
+  });
+
+  // The failure this step exists for: the page still says "check your email"
+  // and the key is dead.
+  it('fails and names the Resend key when the provider refused the send', async () => {
+    stubVerify({
+      events: [
+        ISSUED,
+        { event: 'share.code_send_failed', properties: { reason: 'provider_refused' } },
+      ],
+    });
+    await expect(run()).rejects.toThrow(/provider_refused.*RESEND_API_KEY/s);
+  });
+
+  // The failure the old "nothing refused it" condition passed: the code was
+  // stored, the page said check your email, and the message never left. A
+  // hung send, a dropped waitUntil and a failure whose own log write failed
+  // all look like this, and all of them used to be a PASS.
+  it('fails when the provider never accepted the message, even with nothing refused', async () => {
+    stubVerify({ events: [ISSUED] });
+    await expect(run()).rejects.toThrow(/no share\.code_sent row.*never accepted the message/s);
+  });
+
+  it('fails when no code was issued at all within the window', async () => {
+    stubVerify({ events: [] });
+    await expect(run()).rejects.toThrow(/no share\.code_sent row.*nothing was recorded at all/s);
+  });
+
+  // A 303 is the PLAIN gate letting the reader in, which means the link is
+  // not the verified one this step thought it created.
+  it('fails when the gate lets the reader straight in', async () => {
+    stubVerify({ gate: { status: 303, body: '' } });
+    await expect(run()).rejects.toThrow(/plain e-mail gate/);
+  });
+
+  it('skips, and passes the journey, when the verified gate is not deployed', async () => {
+    stubVerify({
+      probe: {
+        status: 400,
+        body: '{"message":"column document_shares.verify_email does not exist"}',
+      },
+    });
+    const { report, firstFailure } = await runJourney(cfg, { 'verify-code': run });
+    expect(report).toBe(
+      'SKIP verify-code — document_shares has no verify_email column; schema/055 is not deployed',
+    );
+    expect(firstFailure).toBe(null);
+  });
+
+  // An unreachable database is not an absent feature, and must not be quietly
+  // skipped past.
+  it('fails rather than skips when the database itself is broken', async () => {
+    stubVerify({ probe: { status: 500, body: 'boom' } });
+    await expect(run()).rejects.toThrow(/returned 500/);
+  });
+});
+
+// The reader is a constant, so this guard can only fire on somebody editing
+// it — which is exactly the edit that would mail a real person daily.
+describe('requireMailSink', () => {
+  it('returns a sink address and refuses anything else', () => {
+    expect(requireMailSink('delivered+verify-journey@resend.dev')).toBe(
+      'delivered+verify-journey@resend.dev',
+    );
+    expect(() => requireMailSink('hello@htmlradar.com')).toThrow(/not a mail sink/);
+    expect(() => requireMailSink('someone@notresend.dev')).toThrow(/not a mail sink/);
   });
 });
 

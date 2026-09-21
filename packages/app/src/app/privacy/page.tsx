@@ -50,6 +50,17 @@ export default function PrivacyPage() {
                   the share requires one.
                 </li>
                 <li>
+                  If the sender turns on <strong className="text-ink">email verification</strong>,
+                  we send that address a six-digit code. We store only a keyed hash of the code,
+                  never the code itself. The code works for ten minutes, and we delete the record an
+                  hour after it was sent — the job that clears them runs every five minutes, so in
+                  the worst case a record is there for about sixty-five minutes. We keep it that
+                  long, and no longer, only so that nobody can use the gate to send somebody a
+                  hundred codes. Once an address has been verified we record that, and the sender
+                  sees a verified mark beside it in their report. The code is sent through our mail
+                  provider, Resend.
+                </li>
+                <li>
                   A <strong className="text-ink">random fingerprint</strong> — a value we generate
                   so that the same person opening the same document twice counts as one reader
                   rather than two. On a document we serve, it lives in a cookie named{' '}

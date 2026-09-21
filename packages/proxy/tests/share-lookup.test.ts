@@ -55,14 +55,22 @@ function mockFetch(status: number, body: unknown) {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('getShareBySlug reads the private view', () => {
-  it('queries share_lookup, scoped to the one slug', async () => {
+describe('getShareBySlug reads the private lookup', () => {
+  it('calls share_lookup_for and DECLARES that it enforces verification', async () => {
+    // The declaration is the interlock from Astra's finding 3: the plain view
+    // no longer contains verified shares, so a worker that does not pass this
+    // finds nothing and answers not-found rather than opening the document.
     const spy = mockFetch(200, [row]);
     await getShareBySlug(env, 'acme-proposal');
     const requested = new URL(spy.mock.calls[0]![0] as string);
-    expect(requested.pathname).toBe('/rest/v1/share_lookup');
-    expect(requested.searchParams.get('slug')).toBe('eq.acme-proposal');
+    expect(requested.pathname).toBe('/rest/v1/rpc/share_lookup_for');
     expect(requested.searchParams.get('limit')).toBe('1');
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_slug: 'acme-proposal',
+      p_supports_verification: true,
+    });
   });
 
   it('names its columns instead of asking for everything', async () => {

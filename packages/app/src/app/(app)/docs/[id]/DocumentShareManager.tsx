@@ -44,6 +44,13 @@ export interface ShareRow {
   slug: string;
   recipient_label: string | null;
   require_email: boolean;
+  /**
+   * The verified e-mail gate (schema/055). Never true while require_email is
+   * false — the database refuses that pair outright. Optional here, and absent
+   * reads as off, which is the safe direction for a flag that decides whether
+   * a reader is challenged: a caller that forgets it asks for less, never more.
+   */
+  verify_email?: boolean;
   require_password: boolean;
   // Domain allowlist (e.g. ['example.com', 'example.org']). When the
   // edit form opens for an existing share, we pre-fill this textarea from

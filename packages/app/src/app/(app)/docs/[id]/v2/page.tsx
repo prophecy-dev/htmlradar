@@ -177,17 +177,43 @@ async function renderV2({
   let allSessions: Session[] = [];
   let allEvents: SectionEvent[] = [];
   let visibleSessions: Session[] = [];
+  // The READS that proved themselves through the verified e-mail gate
+  // (schema/055), as viewer ids.
+  //
+  // Ids and not addresses. A verification belongs to one link — the table is
+  // keyed `(share_id, email)` — and an address is not a proof of anything on a
+  // link where nobody was asked for a code. Collecting addresses across the
+  // document made somebody who typed the same address on an ordinary sibling
+  // link inherit the mark, which is the opposite of what the mark is for.
+  //
+  // Row-level security scopes this to links this account owns, so the read
+  // needs no owner filter of its own.
+  let verifiedViewerIds: string[] = [];
   if (shareIds.length) {
-    const [viewersRes, sessionsRes] = await Promise.all([
+    const [viewersRes, sessionsRes, verifiedRes] = await Promise.all([
       supabase.from('viewers').select('*').in('share_id', shareIds),
       supabase
         .from('sessions')
         .select('*')
         .in('share_id', shareIds)
         .order('started_at', { ascending: false }),
+      supabase.from('share_email_verifications').select('share_id, email').in('share_id', shareIds),
     ]);
     allViewers = (viewersRes.data ?? []) as Viewer[];
     allSessions = (sessionsRes.data ?? []) as Session[];
+    // A viewer is verified when the code was proved on THAT viewer's own link
+    // at THAT viewer's own address, so the pair is what is matched.
+    const verifiedPairs = new Set(
+      ((verifiedRes.data ?? []) as Array<{ share_id: string; email: string }>).map(
+        (r) => `${r.share_id}|${r.email.trim().toLowerCase()}`,
+      ),
+    );
+    verifiedViewerIds = allViewers
+      .filter(
+        (v) =>
+          v.email?.trim() && verifiedPairs.has(`${v.share_id}|${v.email.trim().toLowerCase()}`),
+      )
+      .map((v) => v.id);
 
     const sessionIds = allSessions.map((s) => s.id);
     const eventsRes = sessionIds.length
@@ -247,6 +273,7 @@ async function renderV2({
     slug: s.slug,
     recipient_label: s.recipient_label,
     require_email: s.require_email,
+    verify_email: Boolean(s.verify_email),
     require_password: s.require_password,
     allowed_email_domains: (s.allowed_email_domains as string[] | null) ?? null,
     allowed_emails: (s.allowed_emails as string[] | null) ?? null,
@@ -485,6 +512,7 @@ async function renderV2({
         toggleShareAction={toggleShareAction}
         deleteShareAction={deleteShareAction}
         viewers={allViewers}
+        verifiedViewerIds={verifiedViewerIds}
         sessions={allSessions}
         events={allEvents}
         shareSlugs={shareSlugs}

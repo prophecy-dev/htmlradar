@@ -31,6 +31,12 @@ const SHARE_FIELDS: [string, string, string, string][] = [
   ['title', 'string', "the document's <title>", 'Shown on your dashboard only.'],
   ['recipient_label', 'string', 'none', 'Who the link is for, e.g. "Acme".'],
   ['require_email', 'boolean', 'true', 'Ask for an email before the document opens.'],
+  [
+    'verify_email',
+    'boolean',
+    'false',
+    'Mails a six-digit code to the address the reader types on the gate, and the document opens only once that code comes back. Requires require_email: true, or the call returns a 422.',
+  ],
   ['password', 'string', 'none', 'Extra gate on top of the email gate. At least 8 characters.'],
   ['lock_deck', 'boolean', 'true', 'Blocks save and print and adds a watermark.'],
   ['allowed_email_domains', 'string[]', 'none', 'Only these domains may open it. Up to 500.'],

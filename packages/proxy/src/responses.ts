@@ -168,7 +168,13 @@ p.lede {
   color: var(--ink-soft);
 }
 form { margin: 0; }
-input[type="email"], input[type="password"], select, textarea {
+/* "text" is here for the verification code field, and leaving it out was a
+   real defect rather than a cosmetic one: an input this block does not match
+   gets the browser's default styling, which on iOS Safari means a font size
+   under 16px — the threshold that zooms the viewport on focus and makes the
+   page look broken at the exact moment the reader is typing. It also missed
+   the border, the padding and the focus ring every other field here has. */
+input[type="email"], input[type="password"], input[type="text"], select, textarea {
   width: 100%;
   font: inherit;
   /* 16px is the iOS Safari zoom-on-focus threshold. Anything smaller
@@ -309,6 +315,16 @@ ${FONTS_LINK}
         // a stale cached form would carry an old CSRF posture and
         // confuse error-state rendering. no-store covers both.
         'Cache-Control': 'private, no-store, max-age=0',
+        // STRICT-ORIGIN, AND NEVER no-referrer. Item E of the verified-gate
+        // brief, and the reason is the outage of 21 September 2026: a page
+        // served `Referrer-Policy: no-referrer` posts with a literal
+        // `Origin: null`, which refused every real sign-in. These pages are
+        // sandboxed into an opaque origin, so they post with `Origin: null`
+        // whatever this header says — but naming the safe policy here is what
+        // stops somebody "tightening" it to no-referrer later and rediscovering
+        // that morning. Nothing on these pages needs a full referrer, and
+        // strict-origin sends none at all when the destination is not HTTPS.
+        'Referrer-Policy': 'strict-origin',
       },
     },
   );
@@ -439,12 +455,17 @@ export const optOutConfirm = (
     'Read tracking',
   );
 
-export const emailGateForm = (slug: string, error?: string): Response =>
+// `token` is present only on a link that asks for a verified address. It is
+// signed over the challenge cookie this browser was just given, and the post is
+// refused without it — see isOwnGatePost and issueGateToken in auth.ts for why
+// the cookie alone was not a defence.
+export const emailGateForm = (slug: string, error?: string, token?: string): Response =>
   SHELL(
     error ? 'Email error' : 'Enter your email',
     `<h1>View this document.</h1>
      <p class="lede">Enter your email to continue.</p>
      <form method="POST" action="/r/${escapeHtml(slug)}/email" novalidate>
+       ${token ? `<input type="hidden" name="t" value="${escapeHtml(token)}">` : ''}
        <input
          type="email"
          name="email"
@@ -461,6 +482,89 @@ export const emailGateForm = (slug: string, error?: string): Response =>
      ${reportLink(slug)}`,
     error ? 401 : 200,
     'Email required',
+  );
+
+// THE SECOND STEP OF THE VERIFIED E-MAIL GATE, and the most carefully worded
+// page in this file.
+//
+// IT IS THE SAME PAGE FOR EVERY OUTCOME, and that is the whole design. A
+// permitted address, a non-permitted address, an address over its limit, a
+// mail provider that refused us and a mail provider that never answered all
+// end here, with this status and these words. There is no longer a
+// send-failure page, because a page that only ever appeared on the permitted
+// path was itself the answer to "is this address on the list?".
+//
+// WHICH IS WHY THE COPY CARRIES THE FAILURE CASE. A reader whose code is
+// never coming — because our provider refused it — would otherwise sit staring
+// at a form waiting for a message that will not arrive. "It can take a minute
+// to arrive. If nothing comes, check the address and ask for another code"
+// tells that person what to do without telling anybody anything: it is equally
+// true and equally unremarkable for somebody who mistyped their address,
+// somebody who is not on the list at all, and somebody whose code is simply
+// slow.
+//
+// IT IS THE SAME PAGE FOR AN ADDRESS THE LINK PERMITS AND ONE IT DOES NOT.
+// That is decision 2 of the brief and it is the whole anti-enumeration
+// property: somebody who holds the link must not be able to use the gate to
+// discover who is on the allow-list. Same words, same status code, same
+// form — the only difference in the world is that a permitted address also
+// receives a message, and that difference is in a mailbox we are not showing.
+//
+// So the sentence is conditional on purpose: "If that address can open this
+// document, we have sent it a code." It promises nothing about an address we
+// will not discuss, and it is honest to the person it is really for, who did
+// get the code and is about to type it.
+//
+// THE FIELD. `one-time-code` is what lets iOS and Android offer the code from
+// the notification, which is the difference between typing six digits and
+// tapping once. `inputmode="numeric"` puts a phone on the number pad without
+// making the field a `type="number"`, which would bring a spinner, strip
+// leading zeroes and break paste. Six characters, `autofocus`, and nothing
+// that interferes with pasting — a reader who copies the code out of their
+// mail client lands on this field with it already in the clipboard.
+//
+// NO JAVASCRIPT, like every other page here. The form posts and the server
+// answers; there is nothing to go wrong in a locked-down browser.
+//
+// The address travels in a hidden field rather than a second cookie. It is not
+// a thing to protect: the code in the database is bound to the address, the
+// link and the browser's challenge together, so a reader who edits this field
+// is asking about a code that does not exist and is told the code is wrong.
+export const verifyCodeForm = (
+  slug: string,
+  email: string,
+  token: string,
+  error?: string,
+  status = 200,
+): Response =>
+  SHELL(
+    error ? 'Check your code' : 'Enter your code',
+    `<h1>Check your email.</h1>
+     <p class="lede">If that address can open this document, we have sent it a six-digit code. It works for ten minutes. It can take a minute to arrive. If nothing comes, check the address and ask for another code.</p>
+     <form method="POST" action="/r/${escapeHtml(slug)}/verify" novalidate>
+       <input type="hidden" name="email" value="${escapeHtml(email)}">
+       <input type="hidden" name="t" value="${escapeHtml(token)}">
+       <label for="code">Six-digit code</label>
+       <input
+         id="code"
+         type="text"
+         name="code"
+         inputmode="numeric"
+         autocomplete="one-time-code"
+         maxlength="6"
+         placeholder="000000"
+         style="letter-spacing:0.38em;font-family:ui-monospace,'JetBrains Mono','SF Mono',Menlo,monospace"
+         required
+         autofocus
+         ${error ? 'class="invalid" aria-invalid="true"' : ''}
+       />
+       <div class="error" role="alert" aria-live="polite">${error ? escapeHtml(error) : ''}</div>
+       <button type="submit">Open the document</button>
+     </form>
+     <p class="report"><a href="/r/${escapeHtml(slug)}">Use a different address</a></p>
+     ${reportLink(slug)}`,
+    status,
+    'Code required',
   );
 
 // The four reasons, in the order they appear in the menu. Exported because
