@@ -166,7 +166,14 @@ describe('the built server, launched as a client launches it', () => {
   );
 
   it('handshakes normally with a well-formed key and prints nothing to stderr', async () => {
-    const { init, list, server: live } = await handshake({ HTMLRADAR_API_KEY: WELL_FORMED_KEY });
+    const {
+      init,
+      list,
+      server: live,
+    } = await handshake({
+      HTMLRADAR_API_KEY: WELL_FORMED_KEY,
+      HTMLRADAR_API_URL: 'https://radar.example.com',
+    });
     expect(init.result.serverInfo?.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(list.result.tools).toHaveLength(8);
     expect(live.stderr).toBe('');
