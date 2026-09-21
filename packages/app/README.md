@@ -31,6 +31,10 @@ DEV_USER_EMAIL=you@somnia.network SESSION_SECRET=dev-secret pnpm dev
 `next dev` gets local D1 and R2 through `setupDevPlatform()` (see `next.config.mjs`).
 Without Access in front, `DEV_USER_EMAIL` is who you are — never set it in production.
 
+On native Windows, `next dev` (14.2) fails to render any edge-runtime page that uses a
+client component (`resolveClientReference … reading 'default'`), even a two-line one;
+the API routes work. Use WSL or macOS/Linux for the UI. `build:edge` needs them too.
+
 ## Build
 
 `pnpm --filter @htmlradar/app build:edge` runs `next-on-pages` and writes
