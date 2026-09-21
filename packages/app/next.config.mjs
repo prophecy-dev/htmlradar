@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setupDevPlatform } from '@cloudflare/next-on-pages/next-dev';
 
 // Load the workspace-root .env.local so the monorepo has a single source
 // of truth for secrets. Next.js by default only looks in the package
-// directory; symlinking .env.local in is awkward across permission
-// boundaries, so we just read the file here at config-load time and
-// inject any vars that aren't already set in the process env.
+// directory, so we read the file here at config-load time and inject any
+// vars that aren't already set in the process env.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnvPath = path.resolve(__dirname, '../../.env.local');
 if (fs.existsSync(rootEnvPath)) {
@@ -18,38 +18,37 @@ if (fs.existsSync(rootEnvPath)) {
   }
 }
 
+// `next dev` gets the D1 and R2 bindings from wrangler.jsonc (local
+// simulations under packages/app/.wrangler/state, the same store
+// `wrangler d1 migrations apply htmlradar --local` writes), so
+// getRequestContext().env works the same in development as on Pages.
+if (process.env.NODE_ENV === 'development') {
+  await setupDevPlatform();
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // @htmlradar/db ships TypeScript source with NodeNext-style `.js` imports.
+  transpilePackages: ['@htmlradar/db'],
+  webpack(config) {
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      '.js': ['.ts', '.tsx', '.js'],
+    };
+    return config;
+  },
   experimental: {
     externalDir: true,
-    // Body-size ceiling for ALL Server Actions in this app:
-    //   - HTML doc uploads (createDocument): up to 30 MB per file
-    //   - Attachment batch uploads (Sprint B): 25 MB per file, may
-    //     batch a few files at once (typical 5-15 MB total)
-    // 30 MB covers both. Cloudflare Pages free tier allows up to
-    // 100 MB request body, so we have headroom.
+    // Body-size ceiling for ALL Server Actions: HTML uploads up to 30 MB,
+    // attachment batches of 25 MB files.
     serverActions: { bodySizeLimit: '30mb' },
   },
-  // /v2: redesigned landing was staged here while iterating; now at /.
-  // /dashboard: the cross-doc Analytics *overview* tab was removed
-  //             2026-05-17 (redundant with /docs/[id]), so the bare
-  //             /dashboard route redirects stale bookmarks to the
-  //             Documents list. NOTE: /dashboard/:slug is NOT part of
-  //             that — it's the live per-share analytics page that the
-  //             first-open email CTA, the share-by-share table, and the
-  //             post-create redirect all link into. It must resolve to
-  //             the real page, so it is deliberately NOT redirected.
+  // The bare /dashboard was the removed cross-document overview; the
+  // per-share /dashboard/:slug is live and deliberately not redirected.
   async redirects() {
-    return [
-      { source: '/v2', destination: '/', permanent: true },
-      { source: '/dashboard', destination: '/docs', permanent: false },
-      // /compare/pitch was removed 2026-07-03: its core instruction
-      // ("export Pitch to HTML") described a feature Pitch doesn't have.
-      // Nearest honest page takes over the URL.
-      { source: '/compare/pitch', destination: '/use-case/track-html-deck', permanent: true },
-    ];
+    return [{ source: '/dashboard', destination: '/docs', permanent: false }];
   },
 };
 

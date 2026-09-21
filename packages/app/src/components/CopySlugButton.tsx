@@ -6,24 +6,13 @@
 
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { captureClientEvent } from '@/lib/events-client';
 import { shareUrl } from '@/lib/share-url';
 
-export function CopySlugButton({
-  slug,
-  hostHandle,
-  customHostname,
-}: {
-  slug: string;
-  hostHandle: string | null;
-  // The customer's own domain, when the share was issued on one (schema/052).
-  customHostname?: string | null;
-}) {
+export function CopySlugButton({ slug }: { slug: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    const fullUrl = shareUrl(slug, hostHandle, customHostname);
-    void captureClientEvent('share.copied', { slug });
+    const fullUrl = shareUrl(slug);
     try {
       await navigator.clipboard.writeText(fullUrl);
       setCopied(true);

@@ -8,12 +8,8 @@
 // - "Create a new share link" CTA opens a draft card with the same form
 //   shape, submitted via createShareFormAction
 //
-// All server actions reused verbatim from the existing live page —
-// DocumentShareManager (1418 lines) is untouched and still serves
-// the live /docs/[id] route. Rollback = swap one import.
 
-import { useEffect, useState, useTransition } from 'react';
-import { captureClientEvent } from '@/lib/events-client';
+import { useState, useTransition } from 'react';
 import { verifiedGateEnabled } from '@/lib/verified-gate';
 import { createShareFormAction } from '../actions';
 import { normalizeSlugInput } from '@/lib/share-slug';
@@ -30,10 +26,10 @@ import {
   EyeOff,
   RotateCcw,
 } from 'lucide-react';
-import type { ShareRow, ShareAnalyticsData } from '../DocumentShareManager';
+import type { ShareRow, ShareAnalyticsData } from '../share-types';
 import { cn } from '@/lib/cn';
 import { localInputToIso } from '@/lib/datetime-local';
-import { ADDRESS_UNAVAILABLE, SHARE_HOST, domainDisconnectedNote, shareUrl } from '@/lib/share-url';
+import { SHARE_HOST, shareUrl } from '@/lib/share-url';
 
 interface ShareCardListProps {
   documentId: string;
@@ -45,13 +41,6 @@ interface ShareCardListProps {
   editShareAction: (formData: FormData) => Promise<void>;
   toggleShareAction: (formData: FormData) => Promise<void>;
   deleteShareAction: (formData: FormData) => Promise<void>;
-  // Free-tier link cap (pricing v4). null = pro (unlimited, no counter/gate).
-  freeShareCap?: { used: number; cap: number } | null;
-  // The owner's live custom domain (schema/052), or null for everyone who has
-  // not connected one — which is everyone while the feature is off. It is only
-  // ever the address a NEW link would take; every existing card reads its own
-  // row instead, so nothing already sent follows this value.
-  defaultDomainHostname?: string | null;
 }
 
 export function ShareCardList(props: ShareCardListProps) {
@@ -62,35 +51,11 @@ export function ShareCardList(props: ShareCardListProps) {
     editShareAction,
     toggleShareAction,
     deleteShareAction,
-    freeShareCap,
-    defaultDomainHostname = null,
   } = props;
-  // freeShareCap is null exactly when the owner is Pro (see v2/page.tsx), so
-  // it doubles as the entitlement signal for the link-address field. The
-  // database is what actually enforces it (schema/033).
-  const isPro = !freeShareCap;
+  // Internal deployment: every sender can choose a link ending.
+  const isPro = true;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [showDraft, setShowDraft] = useState(false);
-  const atShareCap = !!freeShareCap && freeShareCap.used >= freeShareCap.cap;
-
-  // Both paying customers converted here — on *seeing* they were at the limit,
-  // not on being blocked by it. Neither ever attempted a third link, so
-  // free_tier.share_cap_hit (which only fires on a blocked create) has never
-  // recorded a single event and never will for a normal user.
-  //
-  // This is the impression that actually precedes payment, so it is the
-  // denominator we were missing: how many people see this card versus how many
-  // click through to /upgrade. Without it we can see 2 of 3 upgrade-page views
-  // became payments, but not how many people saw the limit and shrugged — which
-  // is the number that tells us whether a cap of 2 is right.
-  useEffect(() => {
-    if (!atShareCap) return;
-    void captureClientEvent('free_tier.cap_card_seen', {
-      document_id: documentId,
-      used: freeShareCap!.used,
-      cap: freeShareCap!.cap,
-    });
-  }, [atShareCap, documentId, freeShareCap]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -103,52 +68,27 @@ export function ShareCardList(props: ShareCardListProps) {
 
   return (
     <div className="space-y-3">
-      {!showDraft &&
-        (atShareCap ? (
-          // Free tier, both links used — gate the create action with an upgrade
-          // prompt. (The server action also enforces this; this is the UX.)
-          <div className="rounded-2xl border border-dashed border-signal/40 bg-signal/5 p-5">
-            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-signal-dark">
-              Free plan · {freeShareCap!.used} of {freeShareCap!.cap} links used
-            </p>
-            <p className="mt-2 max-w-md text-[14px] leading-relaxed text-ink-soft">
-              You&apos;ve used both free tracked links. Upgrade to Pro for unlimited links and no
-              watermark.
-            </p>
-            <a
-              href="/upgrade?reason=share_quota"
-              className="mt-4 inline-flex items-center gap-2 rounded-md bg-signal px-4 py-2 font-sans text-[14px] font-medium text-paper hover:bg-signal-dark"
-            >
-              Upgrade to Pro
-            </a>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setShowDraft(true)}
-            className={cn(
-              'group flex w-full items-center gap-3 rounded-2xl border border-dashed border-signal/70 bg-paper p-5 text-left transition-colors hover:bg-paper/60',
-            )}
-          >
-            <span className="grid size-9 place-items-center rounded-full border border-signal/70 text-signal transition-transform group-hover:rotate-90">
-              <Plus className="size-4" />
-            </span>
-            <span className="font-sans text-[14.5px] font-medium text-signal">
-              Create a new share link
-              {freeShareCap && (
-                <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.1em] text-graphite">
-                  · {freeShareCap.used} of {freeShareCap.cap} free
-                </span>
-              )}
-            </span>
-          </button>
-        ))}
+      {!showDraft && (
+        <button
+          type="button"
+          onClick={() => setShowDraft(true)}
+          className={cn(
+            'group flex w-full items-center gap-3 rounded-2xl border border-dashed border-signal/70 bg-paper p-5 text-left transition-colors hover:bg-paper/60',
+          )}
+        >
+          <span className="grid size-9 place-items-center rounded-full border border-signal/70 text-signal transition-transform group-hover:rotate-90">
+            <Plus className="size-4" />
+          </span>
+          <span className="font-sans text-[14.5px] font-medium text-signal">
+            Create a new share link
+          </span>
+        </button>
+      )}
 
       {showDraft && (
         <DraftShareCard
           documentId={documentId}
           isPro={isPro}
-          defaultDomainHostname={defaultDomainHostname}
           onCancel={() => setShowDraft(false)}
         />
       )}
@@ -186,12 +126,10 @@ export function ShareCardList(props: ShareCardListProps) {
 function DraftShareCard({
   documentId,
   isPro,
-  defaultDomainHostname,
   onCancel,
 }: {
   documentId: string;
   isPro: boolean;
-  defaultDomainHostname: string | null;
   onCancel: () => void;
 }) {
   return (
@@ -218,12 +156,7 @@ function DraftShareCard({
         </button>
       </div>
       <div className="px-5 py-5">
-        <ShareForm
-          mode="create"
-          documentId={documentId}
-          isPro={isPro}
-          defaultDomainHostname={defaultDomainHostname}
-        />
+        <ShareForm mode="create" documentId={documentId} isPro={isPro} />
       </div>
     </div>
   );
@@ -353,22 +286,13 @@ function LinkSection({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isPreviewing, startPreview] = useTransition();
 
-  // The row names a domain and its hostname did not come back with it. There
-  // is no address to print: the apex one would look right, copy cleanly and
-  // open nothing, so the card says so and offers no controls for it.
-  const addressUnavailable = !!share.custom_domain_id && !share.custom_hostname;
-  const url = shareUrl(share.slug, share.host_handle, share.custom_hostname);
-  const customSlug = hasCustomSlug(share);
-  // A link is served from the hostname stored on its own row. If that domain
-  // has been disconnected the link stops opening, and the owner is the only
-  // person who can find that out before the recipient does.
-  const domainDown = !!share.custom_hostname && share.custom_domain_state !== 'live';
+  const url = shareUrl(share.slug);
+  const customSlug = share.slug_is_custom === true;
 
   const onCopy = async () => {
     // "Copied the link" is the closest signal we have to "actually sent
     // it" — the other copy surface (CopySlugButton on the post-create
     // redirect) only sees the first copy, this one sees every revisit.
-    void captureClientEvent('share.copied', { slug: share.slug, source: 'share_card' });
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -406,55 +330,35 @@ function LinkSection({
       <SectionEyebrow>The link</SectionEyebrow>
       <SectionNote>Send this URL — it always opens whichever version is marked Live.</SectionNote>
 
-      {addressUnavailable ? (
-        <div className="mt-3 rounded-[10px] border border-line bg-paper-2/40 px-3 py-2 text-[12.5px] leading-relaxed text-ink-soft">
-          {ADDRESS_UNAVAILABLE}
-        </div>
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[10px] border border-line bg-paper-2/40 px-3 py-1.5">
-          <code className="flex-1 truncate font-mono text-[12.5px] text-ink-soft">{url}</code>
-          {/* No controls for an address that opens nothing. The address itself
-              stays, because the owner has to see WHICH link is affected, and
-              "Preview as you" goes with the other two: the owner's preview is
-              issued on the share's own hostname (previewShareAction), so it is
-              as dead as the recipient's link. */}
-          {!domainDown && (
-            <>
-              <button
-                type="button"
-                onClick={onCopy}
-                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-ink hover:bg-paper-2/60"
-              >
-                {copied ? <Check className="size-3.5 text-good" /> : <Copy className="size-3.5" />}
-                {copied ? 'Copied' : 'Copy'}
-              </button>
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-ink hover:bg-paper-2/60"
-              >
-                <ExternalLink className="size-3.5" />
-                Open
-              </a>
-              <button
-                type="button"
-                onClick={onPreview}
-                disabled={isPreviewing}
-                className="inline-flex items-center gap-1.5 rounded-md border border-signal/30 bg-signal/5 px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-signal-dark hover:bg-signal/10 disabled:opacity-60"
-              >
-                <Eye className="size-3.5" />
-                {isPreviewing ? 'Opening…' : 'Preview as you'}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {domainDown && (
-        <p className="mt-2 rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-[12.5px] leading-relaxed text-ink">
-          {domainDisconnectedNote(share.custom_hostname!)}
-        </p>
-      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[10px] border border-line bg-paper-2/40 px-3 py-1.5">
+        <code className="flex-1 truncate font-mono text-[12.5px] text-ink-soft">{url}</code>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-ink hover:bg-paper-2/60"
+        >
+          {copied ? <Check className="size-3.5 text-good" /> : <Copy className="size-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-paper px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-ink hover:bg-paper-2/60"
+        >
+          <ExternalLink className="size-3.5" />
+          Open
+        </a>
+        <button
+          type="button"
+          onClick={onPreview}
+          disabled={isPreviewing}
+          className="inline-flex items-center gap-1.5 rounded-md border border-signal/30 bg-signal/5 px-2.5 py-1.5 font-sans text-[12.5px] font-medium text-signal-dark hover:bg-signal/10 disabled:opacity-60"
+        >
+          <Eye className="size-3.5" />
+          {isPreviewing ? 'Opening…' : 'Preview as you'}
+        </button>
+      </div>
       {customSlug && (
         <p className="mt-2 text-[12px] text-ink-soft">
           Permanent — the people you sent this to are using it.
@@ -465,18 +369,9 @@ function LinkSection({
   );
 }
 
-// slug_is_custom arrives from schema/033 but ShareRow is declared in
-// DocumentShareManager.tsx, which this component does not own. The page
-// selects '*', so the field is there at runtime; read it narrowly rather than
-// widening a type that belongs to another file.
-function hasCustomSlug(share: ShareRow): boolean {
-  return (share as ShareRow & { slug_is_custom?: boolean }).slug_is_custom === true;
-}
-
 // Convert the tz-less datetime-local expiry to a true UTC instant in the
 // browser (timezone known here) so the server stores the moment the owner
-// picked, not a UTC misparse. Empty = no expiry, left as-is. (Fixes the
-// [2] timezone bug on the live form — DocumentShareManager was dead.)
+// picked, not a UTC misparse. Empty = no expiry, left as-is.
 function applyLocalExpiry(fd: FormData) {
   const localExpiry = String(fd.get('expires_at') ?? '');
   if (localExpiry) {
@@ -490,16 +385,14 @@ function ShareForm({
   documentId,
   action,
   isPro = false,
-  defaultDomainHostname = null,
 }: {
   mode: 'create' | 'edit';
   share?: ShareRow;
   documentId: string;
   action?: (formData: FormData) => Promise<void>;
   isPro?: boolean;
-  defaultDomainHostname?: string | null;
 }) {
-  const [emailGate, setEmailGate] = useState(share?.require_email ?? true);
+  const [emailGate, setEmailGate] = useState(share?.require_email ?? false);
   const [passwordOn, setPasswordOn] = useState(share?.require_password ?? false);
   const canVerify = verifiedGateEnabled();
   const [verifyEmail, setVerifyEmail] = useState(share?.verify_email ?? false);
@@ -511,17 +404,7 @@ function ShareForm({
   const [slugShortened, setSlugShortened] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, startSubmit] = useTransition();
-  // The founder's rule: a live domain is the default and there is no toggle to
-  // find. The choice of the other address is the prefix of the Link address
-  // field itself — there was a separate "Link domain" section with a toggle in
-  // it until 17 September, and reading a toggle about one address while
-  // looking at another one printed above it was the confusion he named.
-  const [useHtmlradarHost, setUseHtmlradarHost] = useState(false);
   const isCreate = mode === 'create';
-  // The account has somewhere else to put this link, so the prefix is a
-  // choice rather than a label. When it is false there is only one address a
-  // new link can take, and the prefix says it plainly.
-  const hostChoice = isCreate && !!defaultDomainHostname;
 
   // Create submits through onSubmit rather than the form `action` prop on
   // purpose. A rejected link address must leave the customer looking at the
@@ -584,42 +467,9 @@ function ShareForm({
               we&apos;ll generate one. It cannot be changed once the link is created.
             </SectionNote>
             <div className="mt-3 flex items-stretch overflow-hidden rounded-md border border-line bg-paper focus-within:border-signal">
-              {/* The host this link will actually be created on: the owner's
-                  own domain when they have a live one and have not picked the
-                  HTMLRadar address here, and the apex otherwise. There is no
-                  share row yet to read a stored hostname from, so this is the
-                  one address in the app assembled from a host rather than
-                  from a row.
-                  ponytail: still the apex when handle links are switched on
-                  (TRUST_HANDLES) — read the owner's handle in v2/page.tsx and
-                  pass it down when that gate opens. Cosmetic: the link created
-                  is correct either way. */}
-              {hostChoice ? (
-                <>
-                  <label htmlFor="link-address-prefix" className="sr-only">
-                    Link address prefix
-                  </label>
-                  {/* A native select, so it is keyboard and screen-reader
-                      correct for free. Its name and values are the ones the
-                      toggle submitted, so the server action is unchanged: the
-                      database picks the domain inside create_share and all
-                      this form can say is the opposite choice. */}
-                  <select
-                    id="link-address-prefix"
-                    name="use_htmlradar_host"
-                    value={useHtmlradarHost ? 'on' : 'off'}
-                    onChange={(e) => setUseHtmlradarHost(e.target.value === 'on')}
-                    className="shrink-0 border-r border-line bg-paper-2/40 px-3 py-2 font-mono text-[12.5px] leading-normal text-graphite focus:outline-none focus:ring-1 focus:ring-inset focus:ring-signal"
-                  >
-                    <option value="off">{defaultDomainHostname}/r/</option>
-                    <option value="on">{SHARE_HOST}/r/</option>
-                  </select>
-                </>
-              ) : (
-                <span className="shrink-0 border-r border-line bg-paper-2/40 px-3 py-2 font-mono text-[12.5px] leading-normal text-graphite">
-                  {SHARE_HOST}/r/
-                </span>
-              )}
+              <span className="shrink-0 border-r border-line bg-paper-2/40 px-3 py-2 font-mono text-[12.5px] leading-normal text-graphite">
+                {SHARE_HOST}/r/
+              </span>
               <input
                 type="text"
                 name="slug"
@@ -644,20 +494,7 @@ function ShareForm({
               </p>
             )}
           </section>
-        ) : (
-          <section>
-            <SectionEyebrow>Link address</SectionEyebrow>
-            <SectionNote>
-              Pro can choose the ending. Free links get a secure random ending.{' '}
-              <a
-                href="/upgrade?reason=custom_slug"
-                className="font-medium text-signal underline underline-offset-2 hover:text-signal-dark"
-              >
-                See Pro
-              </a>
-            </SectionNote>
-          </section>
-        ))}
+        ) : null)}
 
       {/* Audience section */}
       <section>
@@ -811,6 +648,17 @@ function ShareForm({
             uncontrolled
           />
         </div>
+
+        <div className="mt-4">
+          <ToggleRow
+            label="Alert me on the first real read"
+            desc="E-mail (and Telegram, if set in Settings) when someone first actually reads this link."
+            name="notify_first_open"
+            checked={share?.notify_first_open ?? true}
+            onChange={() => {}}
+            uncontrolled
+          />
+        </div>
       </section>
 
       <div className="border-t border-line/60 pt-5">
@@ -852,9 +700,9 @@ function ShareActions({
   const canDelete = typed.trim().toUpperCase() === 'DELETE';
   // A link whose address the owner chose is never destroyed: freeing the
   // address would let a later customer take it, and a recipient opening an
-  // old email would land on a stranger's document. The database refuses the
-  // delete too (trg_block_custom_slug_delete, schema/033).
-  const customSlug = hasCustomSlug(share);
+  // old email would land on a stranger's document. The
+  // server revokes it instead (deleteShare in packages/db/src/owner.ts).
+  const customSlug = share.slug_is_custom === true;
 
   return (
     <section className="border-t border-line/60 pt-5">

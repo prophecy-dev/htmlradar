@@ -2,14 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Newsreader, JetBrains_Mono } from 'next/font/google';
 import { GeistSans } from 'geist/font/sans';
-import { EventTracker } from '@/components/EventTracker';
-import { NavAutoHide } from '@/components/NavAutoHide';
-import { OrganizationLd } from '@/components/JsonLd';
 import './globals.css';
-// The v2 design language is the site's ONE design system: its :root tokens,
-// the floating nav pill (.v2-nav) and the footer grid (.v2-foot) are loaded
-// globally so inner pages cannot drift back into a second look.
-import './landing-v2.css';
 
 // Newsreader — variable serif for editorial headlines. Less ubiquitous
 // than Fraunces in the SaaS-landing-page rotation, more newspaper than
@@ -38,67 +31,16 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: 'HTMLRadar — Document tracking for HTML', template: '%s · HTMLRadar' },
-  description:
-    'Open-source read tracking for HTML decks, briefs, and proposals. Upload a file or paste a URL, send a tracked link, see who opened it and where they dwelled.',
-  metadataBase: new URL('https://htmlradar.com'),
+  title: { default: 'HTMLRadar', template: '%s · HTMLRadar' },
+  description: 'Somnia-internal read tracking for HTML decks and proposals.',
   applicationName: 'HTMLRadar',
-  authors: [{ name: 'HTMLRadar' }],
-  keywords: [
-    'document tracking',
-    'html tracking',
-    'docsend alternative',
-    'pitch deck tracking',
-    'section-level dwell',
-    'open source docsend',
-    'agpl document tracking',
-  ],
-  openGraph: {
-    type: 'website',
-    locale: 'en_US',
-    title: 'HTMLRadar — Document tracking for HTML',
-    description:
-      'The deck moved to HTML. Tracking should follow. Open-source read tracking for HTML decks, mocks, briefs, and updates. AGPL-3.0.',
-    siteName: 'HTMLRadar',
-    url: 'https://htmlradar.com',
-    // public/og-card.png is 2400×1260 — exactly 2× the 1200×630 OG spec.
-    images: [
-      {
-        url: '/og-card.png',
-        width: 2400,
-        height: 1260,
-        alt: 'HTMLRadar — track who reads your HTML decks',
-      },
-    ],
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'HTMLRadar — Document tracking for HTML',
-    description:
-      'Open-source read tracking for HTML decks, mocks, briefs, and updates. Section-level dwell, per-recipient shares, and first-read email notifications.',
-    images: ['/og-card.png'],
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
-    },
-  },
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${newsreader.variable} ${GeistSans.variable} ${mono.variable}`}>
-      <body className="min-h-screen font-sans">
-        <OrganizationLd />
-        <EventTracker />
-        <NavAutoHide />
-        {children}
-      </body>
+      <body className="min-h-screen font-sans">{children}</body>
     </html>
   );
 }

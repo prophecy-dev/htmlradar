@@ -4,16 +4,11 @@ import { TimezoneSync } from '@/components/TimezoneSync';
 
 export const runtime = 'edge';
 
-// Middleware already redirects unauthenticated requests to /sign-in for any
-// path under (app)/. Pages that need the user object call `requireUser()`
-// themselves. Keeping this layout free of an auth round-trip removes one
-// redundant Supabase call per page render.
+// The middleware refuses anyone Cloudflare Access did not sign in. Pages that
+// need the user object call `requireUser()` themselves.
 //
 // TimezoneSync runs once on mount and writes the browser's IANA timezone
-// to profiles.timezone if it's still the default 'UTC'. The
-// notify_on_first_open trigger reads that column to render email
-// timestamps in the sender's local time. Server action no-ops when the
-// value already matches.
+// to profiles.timezone, which first-read alerts use for local times.
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <>

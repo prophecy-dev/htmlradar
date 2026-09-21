@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowRight, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { captureClientEvent } from '@/lib/events-client';
 import {
   convertPdfToDeck,
   PdfDeckError,
@@ -154,7 +153,6 @@ export function ConvertPanel({
     if (files.length !== 1) {
       setState('rejected');
       setMessage('Choose one PDF at a time.');
-      void captureClientEvent('converter.rejected', { reason: 'multiple' });
       return;
     }
     const attempt = generation.current;
@@ -162,7 +160,6 @@ export function ConvertPanel({
     controller.current = abort;
     setState('converting');
     setProgress('Checking your PDF…');
-    void captureClientEvent('converter.started');
     try {
       const result = await convertPdfToDeck(files[0]!, {
         signal: abort.signal,
@@ -184,7 +181,6 @@ export function ConvertPanel({
       setPage(0);
       setTotal(result.slides.length);
       setState('done');
-      void captureClientEvent('converter.completed');
       try {
         await handoff.replaceFile(new File([result.html], result.filename, { type: 'text/html' }));
       } catch {
@@ -202,7 +198,6 @@ export function ConvertPanel({
         setState(['damaged', 'timeout', 'overflow'].includes(code) ? 'error' : 'rejected');
         setMessage(PDF_DECK_MESSAGES[code]);
       }
-      void captureClientEvent('converter.rejected', { reason: code });
     }
   }
 
@@ -347,7 +342,6 @@ export function ConvertPanel({
             className={cn(BUTTON, 'mt-4 border border-line text-signal-dark hover:bg-paper-2')}
             onClick={() => {
               reset(PDF_DECK_MESSAGES.cancelled);
-              void captureClientEvent('converter.rejected', { reason: 'cancelled' });
             }}
           >
             Cancel
@@ -366,9 +360,7 @@ export function ConvertPanel({
                     BUTTON,
                     'w-full border border-signal text-signal-dark hover:bg-paper-2',
                   )}
-                  onClick={() => {
-                    void captureClientEvent('converter.download_clicked');
-                  }}
+                  onClick={() => {}}
                 >
                   <ArrowDownToLine aria-hidden className="size-4" />
                   Download HTML
@@ -382,7 +374,6 @@ export function ConvertPanel({
                   type="button"
                   disabled={handoff.busy || !handoff.file}
                   onClick={() => {
-                    void captureClientEvent('converter.tracked_link_clicked');
                     void handoff.start();
                   }}
                   className={cn(BUTTON, 'w-full bg-signal text-paper hover:bg-signal-dark')}

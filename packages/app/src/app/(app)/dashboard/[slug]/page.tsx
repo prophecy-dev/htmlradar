@@ -17,12 +17,13 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
-import { requireUser, serverClient } from '@/lib/supabase-server';
+import { getShareBySlug, listSectionEvents, listSessions, listViewers } from '@htmlradar/db/owner';
+import { requireUser } from '@/lib/auth';
+import { db } from '@/lib/cf';
 import { ShareAnalytics } from '@/components/ShareAnalytics';
 import { CopySlugButton } from '@/components/CopySlugButton';
 import { isMetaSectionTitle } from '@/lib/section-filter';
-import { ADDRESS_UNAVAILABLE, domainDisconnectedNote, shareUrlLabel } from '@/lib/share-url';
-import { customDomainStateOf, customHostnameMissing, customHostnameOf } from '@/lib/custom-domains';
+import { shareUrlLabel } from '@/lib/share-url';
 
 export const runtime = 'edge';
 
@@ -33,46 +34,34 @@ export default async function ShareAnalyticsPage({
   params: { slug: string };
   searchParams?: { just_created?: string };
 }) {
-  await requireUser();
-  const supabase = serverClient();
+  const user = await requireUser();
+  const d = db();
 
-  // If the parent document was soft-deleted, treat as 404 so users
-  // can't drill into orphan share analytics (the back-link to /docs/[id]
-  // would dead-end anyway).
-  const { data: share } = await supabase
-    .from('document_shares')
-    .select(
-      '*, custom_domain_id, documents!inner(title, deleted_at), custom_domains(hostname, state)',
-    )
-    .eq('slug', params.slug)
-    .is('documents.deleted_at', null)
-    .single();
+  // getShareBySlug returns nothing for a share of a soft-deleted document, so
+  // orphan analytics 404 instead of dead-ending at the back link.
+  const share = await getShareBySlug(d, user.id, params.slug);
   if (!share) notFound();
-  const docTitle = Array.isArray(share.documents)
-    ? (share.documents[0] as { title: string } | undefined)?.title
-    : (share.documents as unknown as { title: string } | null)?.title;
+  const docTitle = share.document_title;
 
-  const { data: viewers } = await supabase.from('viewers').select('*').eq('share_id', share.id);
-  const { data: sessions } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('share_id', share.id)
-    .order('started_at', { ascending: false });
+  const scope = { shareId: share.id };
+  const [viewers, sessions, rawEvents] = await Promise.all([
+    listViewers(d, user.id, scope),
+    listSessions(d, user.id, scope),
+    listSectionEvents(d, user.id, scope),
+  ]);
 
   // Hide internal viewers (owner self-views + @htmlradar staff, flagged via
   // viewers.is_internal) so this per-share drill-in matches /docs/[id], which
   // excludes them from its headline stats. Without this, clicking a share row
   // from the document page reintroduces reads that page intentionally hid.
-  const internalViewerIds = new Set(
-    (viewers ?? []).filter((v) => v.is_internal === true).map((v) => v.id),
-  );
-  const visibleViewers = (viewers ?? []).filter((v) => !internalViewerIds.has(v.id));
+  const internalViewerIds = new Set(viewers.filter((v) => v.is_internal === true).map((v) => v.id));
+  const visibleViewers = viewers.filter((v) => !internalViewerIds.has(v.id));
 
   // Phantom-session filter (mirrors /docs/[id]/page.tsx). Drop sessions
   // where bounced=true AND active_time_seconds=0 AND max_scroll_depth=0
   // — tracker ghosts that inflated visit counts. Also drop internal viewers'
   // sessions so the stats below match the visible viewer set.
-  const sessionList = (sessions ?? []).filter(
+  const sessionList = sessions.filter(
     (s) =>
       !internalViewerIds.has(s.viewer_id) &&
       !(
@@ -95,18 +84,15 @@ export default async function ShareAnalyticsPage({
     }
   >();
   if (sessionIds.length > 0) {
-    const { data: rawEvents } = await supabase
-      .from('section_events')
-      .select('section_id, section_title, time_seconds, session_id, ordinal')
-      .in('session_id', sessionIds);
+    const visible = new Set(sessionIds);
     // Mirror /docs/[id]/v2's per-share aggregation so the drill-in matches:
     // (1) drop meta/structural "sections" (page numbers, "01 / 14"); and
     // (2) per-session cap — a session's section dwell can't exceed its active
     //     time. Stale pre-fix tracker data over-credited; rescale each
     //     session's events to sum to at most its active_time (current-tracker
     //     sessions already satisfy this, so scale = 1 for them).
-    const events = (rawEvents ?? []).filter(
-      (e) => !isMetaSectionTitle(e.section_title, e.section_id),
+    const events = rawEvents.filter(
+      (e) => visible.has(e.session_id) && !isMetaSectionTitle(e.section_title, e.section_id),
     );
     const sessionEventSum = new Map<string, number>();
     for (const e of events) {
@@ -156,19 +142,7 @@ export default async function ShareAnalyticsPage({
     : share.expires_at && new Date(share.expires_at) < new Date()
       ? ('expired' as const)
       : ('live' as const);
-  const customHostname = customHostnameOf(share);
-  // The share names a domain and the join did not bring its hostname back.
-  // Nothing prints an address in that case, and no copy button offers one.
-  const addressUnavailable = customHostnameMissing(share);
-  // The link is served from the hostname stored on its own row, so if that
-  // domain has stopped answering the link stops opening — and this page is one
-  // of the three places the owner might be looking when that happens. Same
-  // sentence and same treatment as the share card, and the copy button goes:
-  // an address that copies cleanly and opens nothing is worse than none.
-  const domainDown = !!customHostname && customDomainStateOf(share) !== 'live';
-  const fullUrl = addressUnavailable
-    ? ADDRESS_UNAVAILABLE
-    : shareUrlLabel(share.slug, share.host_handle, customHostname);
+  const fullUrl = shareUrlLabel(share.slug);
 
   return (
     <div className="py-8">
@@ -205,30 +179,11 @@ export default async function ShareAnalyticsPage({
 
       <div className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-paper px-4 py-3 md:max-w-2xl">
         <span className="min-w-0 flex-1 truncate font-mono text-[13.5px] text-ink">{fullUrl}</span>
-        {!addressUnavailable && !domainDown && (
-          <CopySlugButton
-            slug={share.slug}
-            hostHandle={share.host_handle}
-            customHostname={customHostname}
-          />
-        )}
+        <CopySlugButton slug={share.slug} />
       </div>
-
-      {/* Said once per page. With no reads yet the waiting panel below owns
-          this sentence, because it is what replaces its invitation to send
-          the link; with reads, that panel is stats and this row owns it. */}
-      {domainDown && sessionList.length > 0 && (
-        <p className="mt-2 rounded-md border border-alert/30 bg-alert/5 px-3 py-2 text-[12.5px] leading-relaxed text-ink md:max-w-2xl">
-          {domainDisconnectedNote(customHostname!)}
-        </p>
-      )}
 
       <div className="mt-12">
         <ShareAnalytics
-          hostHandle={share.host_handle}
-          customHostname={customHostname}
-          addressUnavailable={addressUnavailable}
-          domainDown={domainDown}
           shareSlug={share.slug}
           recipientLabel={share.recipient_label}
           viewers={visibleViewers}

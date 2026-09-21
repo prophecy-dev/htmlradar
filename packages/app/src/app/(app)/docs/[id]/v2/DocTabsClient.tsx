@@ -19,7 +19,7 @@ import { ViewerInsights } from '../ViewerInsights';
 import { SharesTable } from '../SharesTable';
 import { type DocumentVersionRow } from '../VersionHistoryPopover';
 import type { Viewer, Session, SectionEvent } from '@/lib/types';
-import type { ShareRow, ShareAnalyticsData } from '../DocumentShareManager';
+import type { ShareRow, ShareAnalyticsData } from '../share-types';
 import { FileText, Globe } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -40,10 +40,6 @@ interface DocTabsClientProps {
   editShareAction: (formData: FormData) => Promise<void>;
   toggleShareAction: (formData: FormData) => Promise<void>;
   deleteShareAction: (formData: FormData) => Promise<void>;
-  freeShareCap?: { used: number; cap: number } | null;
-  // The owner's live custom domain, if they have one and the feature is on.
-  // Null means every new link is an HTMLRadar link, which is the shipped state.
-  defaultDomainHostname?: string | null;
   viewers: Viewer[];
   /** Lower-cased addresses that passed the verified e-mail gate (schema/055). */
   verifiedViewerIds: string[];
@@ -210,8 +206,6 @@ export function DocTabsClient(props: DocTabsClientProps) {
             editShareAction={props.editShareAction}
             toggleShareAction={props.toggleShareAction}
             deleteShareAction={props.deleteShareAction}
-            freeShareCap={props.freeShareCap ?? null}
-            defaultDomainHostname={props.defaultDomainHostname ?? null}
           />
         </TabPanel>
         <TabPanel tabKey="analytics" active={activeTab === 'analytics'}>
@@ -286,8 +280,6 @@ function SharingPanel({
   editShareAction,
   toggleShareAction,
   deleteShareAction,
-  freeShareCap,
-  defaultDomainHostname,
 }: {
   documentId: string;
   shares: ShareRow[];
@@ -300,10 +292,6 @@ function SharingPanel({
   editShareAction: (formData: FormData) => Promise<void>;
   toggleShareAction: (formData: FormData) => Promise<void>;
   deleteShareAction: (formData: FormData) => Promise<void>;
-  freeShareCap?: { used: number; cap: number } | null;
-  // The owner's live custom domain, if they have one and the feature is on.
-  // Null means every new link is an HTMLRadar link, which is the shipped state.
-  defaultDomainHostname?: string | null;
 }) {
   return (
     <section>
@@ -324,8 +312,6 @@ function SharingPanel({
         editShareAction={editShareAction}
         toggleShareAction={toggleShareAction}
         deleteShareAction={deleteShareAction}
-        freeShareCap={freeShareCap ?? null}
-        defaultDomainHostname={defaultDomainHostname ?? null}
       />
     </section>
   );
