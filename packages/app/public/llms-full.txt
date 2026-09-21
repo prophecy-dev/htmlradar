@@ -608,7 +608,7 @@ Neither level can delete a link or a document, change an account setting, or see
 Turning it off is in one place either way. A connection is listed under Connected apps in htmlradar.com/settings and revoking it there ends its access on the very next tool call. A key is shown once, only a hash of it is stored, and revoking it in the same place is immediate. Every route is rate-limited: creating and replacing share one account budget of 75 calls an hour on Pro and 30 on free, plus 120 calls an hour from one address, while listing and revoking are each capped at 120 calls an hour per account.
 What we receive is the same either way: the HTML the agent passes in, the parameters of the call, and the key or connection it authenticated with. The two routes differ in where the call starts. The package runs on your own machine and talks to htmlradar.com, or to the address in HTMLRADAR_API_URL if you self-host; it reads no files of its own and sends no telemetry. The connector is called by Claude from Anthropic’s servers, so the markup reaches us through them. Either way the activity report includes the email addresses recipients typed at the gate, so the agent sees those.
 
-Seven tools
+Eight tools
 You do not call them by name. You say what you want:
 share this deck with acme as a tracked link, email gate on
 
@@ -623,7 +623,8 @@ recipient_label string none Who the link is for, e.g. "Acme". One link per recip
 require_email boolean true Ask for an email before the document opens.
 password string none Extra gate on top of the email gate. At least 8 characters.
 lock_deck boolean true Blocks save and print and adds a watermark. Pass false to allow both.
-allowed_email_domains string[] none Only these domains may open it, e.g. ["acme.com"].
+allowed_email_domains string[] none Only these domains may open it, e.g. ["acme.com"]. Up to 500.
+allowed_emails string[] none Only these exact addresses may open it, e.g. [" [email protected] "]. Up to 500. Needs the email gate.
 expires_in_hours integer never Positive whole number. Link stops working after it.
 slug string generated Custom link name, so the URL reads /r/acme-proposal. Paid plans.
 
@@ -666,6 +667,8 @@ live · not opened · created 2026-08-30T10:01:00Z
 https://htmlradar.page/r/beta-proposal
 share 33333333-3333-4333-8333-333333333333 · document 22222222-2222-4222-8222-222222222222
 
+list_documents
+Lists your documents, newest first: the title, when it was created, how many links point at it, and the document id create_share and replace_document take. A document you have never sent has no link, so it appears here and in no other tool — which is what makes “send last month’s proposal to these five people” work without you looking anything up. It returns no document contents.
 revoke_share
 Switches a link off. Anyone opening it afterwards sees that it is no longer available, and you are emailed that somebody tried. Reversible — pass revoked: false to put it back. There is no delete tool and there will not be one: revoking is reversible, deleting is not, so deleting stays on the website where you type the confirmation yourself.
 replace_document
