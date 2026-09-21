@@ -13,6 +13,14 @@ on:
   push:
     tags:
       - 'mcp-v*'
+  # Manual re-run for a release whose npm publish succeeded but whose registry
+  # step ran before npm had finished processing the new version (21 Sep 2026,
+  # 0.4.0). Every step below is safe to repeat.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version already in packages/mcp/package.json, for example 0.4.0'
+        required: true
 
 permissions:
   contents: read
@@ -50,7 +58,28 @@ jobs:
         working-directory: packages/mcp
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: |
+          set -e
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "htmlradar-mcp@$VERSION" version >/dev/null 2>&1; then
+            echo "htmlradar-mcp@$VERSION is already on npm; skipping publish."
+          else
+            npm publish --access public --provenance
+          fi
+
+      # npm answers "published" before the version is visible to other
+      # readers, and the MCP registry refuses a version it cannot find on npm.
+      - name: Wait for npm to serve the new version
+        working-directory: packages/mcp
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for attempt in $(seq 1 30); do
+            if [ "$(npm view "htmlradar-mcp@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "npm serves htmlradar-mcp@$VERSION"; exit 0
+            fi
+            echo "not visible yet (attempt $attempt of 30), waiting 10s..."; sleep 10
+          done
+          echo "::error::npm did not serve htmlradar-mcp@$VERSION within five minutes."; exit 1
 
       # The SHA-256 is the mcp-publisher_linux_amd64 line from the release's
       # registry_<version>_checksums.txt; bump both together.
@@ -78,9 +107,10 @@ jobs:
       - name: Verify publish
         env:
           GITHUB_REF: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -e
-          VERSION="${GITHUB_REF#refs/tags/mcp-v}"
+          VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/mcp-v}}"
           echo "Expecting published version: $VERSION"
 
           echo "Checking npm registry..."
