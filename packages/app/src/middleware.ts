@@ -36,6 +36,23 @@ export async function middleware(req: NextRequest) {
 
   const res = NextResponse.next();
   const pathname = req.nextUrl.pathname;
+
+  // /auth/confirm is the last step of an e-mail sign-in and carries a
+  // single-use token in its URL, so the page must never leak that URL through
+  // a Referer header and must never be served from any cache.
+  //
+  // Set here because next.config's `headers()` is applied by Next's own
+  // routing layer, which next-on-pages does not run in front of a Cloudflare
+  // Pages function: the declaration passed in `next dev` and was absent in
+  // production. Middleware is the one layer that does run there. It already
+  // matches this path, and the branch below leaves the path public, so no
+  // auth logic starts running on it. /auth/callback is a route handler and
+  // stamps the same pair on its own responses (see auth/callback/route.ts).
+  if (pathname === '/auth/confirm') {
+    res.headers.set('Referrer-Policy', 'no-referrer');
+    res.headers.set('Cache-Control', 'no-store');
+  }
+
   const requiresAuth =
     !PUBLIC_EXCEPTIONS.has(pathname) &&
     PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

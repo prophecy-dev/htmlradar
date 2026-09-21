@@ -126,8 +126,29 @@ export async function signInStep(cfg) {
     );
   }
 
+  // Both of these URLs carry a single-use token, so both responses have to
+  // deny referrers and deny caching. This is checked in production every day
+  // because it cannot be checked anywhere else: the headers were declared in
+  // next.config for a week and were silently absent on Cloudflare Pages, as
+  // next-on-pages does not run Next's routing layer in front of a Pages
+  // function. `next dev` said they were fine the whole time.
+  const sealed = (res, what) => {
+    for (const [header, expected] of [
+      ['referrer-policy', 'no-referrer'],
+      ['cache-control', 'no-store'],
+    ]) {
+      const actual = res.headers.get(header);
+      if (actual !== expected) {
+        throw new Error(
+          `${what} answered ${header}: ${actual ?? '(absent)'}, not ${expected} — the sign-in token in that URL can leak through a referrer or a cache`,
+        );
+      }
+    }
+  };
+
   const confirmUrl = locationOf(scan);
   const confirm = await fetch(confirmUrl, { redirect: 'manual' });
+  sealed(confirm, '/auth/confirm');
   if (sessionCookies(confirm).length) {
     throw new Error(
       'a GET on /auth/confirm set an sb- session cookie — rendering the page is signing people in, which is the whole bug',
@@ -161,6 +182,7 @@ export async function signInStep(cfg) {
     redirect: 'manual',
   });
   const destination = pathOf(callback);
+  sealed(callback, 'the POST to /auth/callback');
 
   // 303 specifically: a 307 would make the browser re-POST to the
   // destination, and a refresh would offer to submit the token again.

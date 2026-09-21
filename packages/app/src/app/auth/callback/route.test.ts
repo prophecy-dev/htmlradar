@@ -230,6 +230,41 @@ describe('the POST from the confirmation button', () => {
   });
 });
 
+// These were declared in next.config's headers() and were absent in
+// production for a week: next-on-pages does not run Next's routing layer in
+// front of a Cloudflare Pages function, so only headers the handler sets on
+// its own responses survive. Every exit is checked, because the one that is
+// not checked is the one that carries the token.
+describe('every response denies referrers and caching', () => {
+  const sealed = (res: Response) => [
+    res.headers.get('referrer-policy'),
+    res.headers.get('cache-control'),
+  ];
+
+  it('on the hand-off to the confirmation page', async () => {
+    expect(sealed(await get('token_hash=h1&type=email'))).toEqual(['no-referrer', 'no-store']);
+  });
+
+  it('on a successful sign-in, and on the Google door', async () => {
+    expect(sealed(await post({ token_hash: 'h1' }))).toEqual(['no-referrer', 'no-store']);
+    expect(sealed(await get('code=c1&next=%2Fdocs'))).toEqual(['no-referrer', 'no-store']);
+  });
+
+  it('on every failure, including the refused cross-origin POST', async () => {
+    state.verifyError = { message: 'Token has expired or is invalid' };
+    expect(sealed(await post({ token_hash: 'h1' }))).toEqual(['no-referrer', 'no-store']);
+    expect(sealed(await post({ token_hash: 'h1' }, { origin: 'https://evil.example' }))).toEqual([
+      'no-referrer',
+      'no-store',
+    ]);
+    expect(sealed(await get('error_description=expired'))).toEqual(['no-referrer', 'no-store']);
+  });
+
+  it('on the plain pass-through with neither code nor token', async () => {
+    expect(sealed(await get('next=%2Fpricing'))).toEqual(['no-referrer', 'no-store']);
+  });
+});
+
 describe('the Google door is unchanged', () => {
   it('exchanges the code and redirects to next', async () => {
     const res = await get('code=c1&next=%2Fdocs');

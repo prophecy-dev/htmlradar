@@ -34,6 +34,34 @@ import { safeNext } from '@/lib/safe-next';
 
 export const runtime = 'edge';
 
+// Both auth paths carry a single-use sign-in token in the URL, so every
+// response that mentions one has to say so.
+//
+// no-referrer: a subresource request, or the HTMLRadar link in the
+// confirmation page's corner, could otherwise carry the token-bearing URL in
+// a Referer header and drop an unspent token into somebody's request log.
+//
+// no-store: this URL must never come from a cache — not the browser's, not an
+// intermediary's — because what it produces depends on whether the token has
+// been spent yet.
+//
+// Stamped here, on the handler's own responses, rather than declared in
+// next.config: `headers()` is applied by Next's own routing layer, and
+// next-on-pages does not run that layer in front of a Cloudflare Pages
+// function, so the declaration was silently absent in production while
+// passing in `next dev`. The middleware does the same for /auth/confirm.
+// Not exported: a route.ts may only export the HTTP verbs and Next's own
+// route-segment fields, and the build refuses anything else.
+const TOKEN_URL_HEADERS = {
+  'Referrer-Policy': 'no-referrer',
+  'Cache-Control': 'no-store',
+} as const;
+
+function sealed(res: NextResponse): NextResponse {
+  for (const [key, value] of Object.entries(TOKEN_URL_HEADERS)) res.headers.set(key, value);
+  return res;
+}
+
 // Only attach `next` when it's a real destination, to avoid noisy `?next=/docs`.
 function withNext(dest: URL, next: string): URL {
   if (next !== '/docs') dest.searchParams.set('next', next);
@@ -75,7 +103,7 @@ async function signInError(
   // 303, never the default 307: a 307 preserves the method, so a failed POST
   // would POST again to /sign-in and a refresh would offer to resubmit the
   // token. The recovery page must be reached with a GET.
-  return NextResponse.redirect(dest, 303);
+  return sealed(NextResponse.redirect(dest, 303));
 }
 
 // The canonical origin, the same literal /api/auth/magic-link uses to build
@@ -184,7 +212,7 @@ export async function GET(req: NextRequest) {
   if (tokenHash) {
     const dest = withNext(new URL('/auth/confirm', req.url), next);
     dest.searchParams.set('token_hash', tokenHash);
-    return NextResponse.redirect(dest, 303);
+    return sealed(NextResponse.redirect(dest, 303));
   }
 
   // No `code` → this wasn't a successful auth return. If the provider sent an
@@ -202,14 +230,14 @@ export async function GET(req: NextRequest) {
         providerError,
       );
     }
-    return NextResponse.redirect(new URL(next, req.url));
+    return sealed(NextResponse.redirect(new URL(next, req.url)));
   }
 
   const supabase = serverClient();
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) return signInError(req, next, 'callback', error.message);
   if (data.user) await captureSignIn(req, data.user);
-  return NextResponse.redirect(new URL(next, req.url));
+  return sealed(NextResponse.redirect(new URL(next, req.url)));
 }
 
 // The e-mail door's second half: the form on /auth/confirm submits here, and
@@ -253,5 +281,5 @@ export async function POST(req: NextRequest) {
   if (data.user) await captureSignIn(req, data.user);
   // 303, not the default 307: a 307 preserves the method and the browser
   // would POST to `next`.
-  return NextResponse.redirect(new URL(next, req.url), 303);
+  return sealed(NextResponse.redirect(new URL(next, req.url), 303));
 }

@@ -53,17 +53,32 @@ function stubFetch(
     location?: string;
     cookie?: string;
     confirmCookie?: string;
+    sealConfirm?: Record<string, string | null>;
+    sealCallback?: Record<string, string | null>;
     page?: string;
     guarded?: { status: number; location?: string };
   } = {},
 ) {
-  const headers = new Headers([['location', callback.location]]);
+  // Both token-bearing responses must deny referrers and caching; the
+  // defaults are the healthy case, and `seal` breaks one of them.
+  const SEALED: [string, string][] = [
+    ['referrer-policy', 'no-referrer'],
+    ['cache-control', 'no-store'],
+  ];
+  const sealedHeaders = (override?: Record<string, string | null>) =>
+    new Headers(
+      SEALED.map(([key, value]) => [key, override?.[key] ?? value] as [string, string]).filter(
+        ([, value]) => value !== 'ABSENT',
+      ),
+    );
+  const headers = sealedHeaders(scan.sealCallback);
+  headers.set('location', callback.location);
   if (callback.cookie) headers.append('set-cookie', callback.cookie);
   const scanHeaders = new Headers([
     ['location', scan.location ?? 'https://htmlradar.com/auth/confirm?token_hash=pkce_abc123'],
   ]);
   if (scan.cookie) scanHeaders.append('set-cookie', scan.cookie);
-  const confirmHeaders = new Headers();
+  const confirmHeaders = sealedHeaders(scan.sealConfirm);
   if (scan.confirmCookie) confirmHeaders.append('set-cookie', scan.confirmCookie);
   const guarded = scan.guarded ?? { status: 200 };
   const sent: Sent[] = [];
@@ -167,6 +182,36 @@ describe('signInStep', () => {
   it('fails when rendering the confirmation page hands out a session cookie', async () => {
     stubFetch(signedIn, { confirmCookie: 'sb-project-auth-token=abc; Path=/' });
     await expect(signInStep(cfg)).rejects.toThrow(/rendering the page is signing people in/);
+  });
+
+  // These headers were DECLARED in next.config for a week and were absent in
+  // production the whole time, because next-on-pages does not run Next's
+  // routing layer in front of a Cloudflare Pages function. `next dev` served
+  // them, so only a production check can tell the truth about them.
+  it('fails when the confirmation page does not deny referrers', async () => {
+    stubFetch(signedIn, { sealConfirm: { 'referrer-policy': 'ABSENT' } });
+    await expect(signInStep(cfg)).rejects.toThrow(
+      /\/auth\/confirm answered referrer-policy: \(absent\)/,
+    );
+  });
+
+  it('fails when the confirmation page is cacheable', async () => {
+    stubFetch(signedIn, { sealConfirm: { 'cache-control': 'public, max-age=60' } });
+    await expect(signInStep(cfg)).rejects.toThrow(/cache-control: public, max-age=60/);
+  });
+
+  it('fails when the POST response does not deny referrers', async () => {
+    stubFetch(signedIn, { sealCallback: { 'referrer-policy': 'strict-origin-when-cross-origin' } });
+    await expect(signInStep(cfg)).rejects.toThrow(
+      /the POST to \/auth\/callback answered referrer-policy/,
+    );
+  });
+
+  it('fails when the POST response is cacheable', async () => {
+    stubFetch(signedIn, { sealCallback: { 'cache-control': 'ABSENT' } });
+    await expect(signInStep(cfg)).rejects.toThrow(
+      /the POST to \/auth\/callback answered cache-control: \(absent\)/,
+    );
   });
 
   it('fails when the e-mail link does not reach the confirmation page', async () => {
