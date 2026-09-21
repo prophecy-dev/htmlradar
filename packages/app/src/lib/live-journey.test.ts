@@ -502,7 +502,20 @@ describe('customHostStep', () => {
 describe('verifyCodeStep', () => {
   const SHARE_URL = 'https://htmlradar.page/r/quick-glass';
   const READER = 'delivered+verify-journey@resend.dev';
-  const codePage = `<h1>Check your email.</h1><form method="POST" action="/r/quick-glass/verify"></form>`;
+  const CHALLENGE = 'a'.repeat(32);
+  const TOKEN = '1790000000.deadbeef';
+  // The two pages as the worker really renders them: the gate sets a
+  // `__Host-` challenge and signs a hidden `t` over it, and the code page
+  // carries its own `t` plus the address it echoes back.
+  const gatePage =
+    `<h1>View this document.</h1><form method="POST" action="/r/quick-glass/email" novalidate>` +
+    `<input type="hidden" name="t" value="${TOKEN}">` +
+    `<input type="email" name="email" required></form>`;
+  const codePage =
+    `<h1>Check your email.</h1><form method="POST" action="/r/quick-glass/verify" novalidate>` +
+    `<input type="hidden" name="email" value="${READER}">` +
+    `<input type="hidden" name="t" value="${TOKEN}">` +
+    `<input type="text" name="code"></form>`;
   const ISSUED = { event: 'share.email_submitted', properties: { result: 'code_issued' } };
   const SENT = {
     event: 'share.code_sent',
@@ -521,12 +534,19 @@ describe('verifyCodeStep', () => {
     gate = { status: 200, body: codePage },
     probe = '[]',
     create,
+    landing = { status: 200, body: gatePage, cookie: `__Host-hr_vc=${CHALLENGE}; Path=/` },
   }: {
     events?: unknown[];
     gate?: { status: number; body: string };
     probe?: string | { status: number; body: string };
     /** Overrides the app's answer when the step tries to create the link. */
     create?: { status: number; body: string };
+    /**
+     * The gate page the link's own address serves. A browser lands here first,
+     * keeps the cookie and reads the form; the step that did not was what made
+     * this check fail against a perfectly healthy product.
+     */
+    landing?: { status: number; body: string; cookie: string | null };
   } = {}) {
     const calls: string[] = [];
     const sent: Sent[] = [];
@@ -557,6 +577,15 @@ describe('verifyCodeStep', () => {
               });
         }
         if (url.includes('/rest/v1/app_events')) return body(events);
+        // The link's own address, answering the gate with its challenge.
+        if (url === SHARE_URL) {
+          return Promise.resolve({
+            ok: landing.status === 200,
+            status: landing.status,
+            headers: { getSetCookie: () => (landing.cookie ? [landing.cookie] : []) },
+            text: () => Promise.resolve(landing.body),
+          });
+        }
         if (url.endsWith('/api/v1/shares')) {
           return create
             ? Promise.resolve({
@@ -567,9 +596,23 @@ describe('verifyCodeStep', () => {
             : body({ share_id: 'share-1', url: SHARE_URL });
         }
         if (url.includes('/revoke')) return body({ ok: true });
+        // The gate POST. It answers like the real worker: without the
+        // challenge cookie or the signed field it refuses with a 401, which is
+        // exactly what production did to the old step.
+        const sentCookie = init?.headers?.['cookie'] ?? '';
+        const sentBody = String((init as { body?: unknown })?.body ?? '');
+        if (!sentCookie.includes('__Host-hr_vc=') || !/(^|&)t=/.test(sentBody)) {
+          return Promise.resolve({
+            ok: false,
+            status: 401,
+            headers: { getSetCookie: () => [] },
+            text: () => Promise.resolve('<h1>View this document.</h1>'),
+          });
+        }
         return Promise.resolve({
           ok: gate.status === 200,
           status: gate.status,
+          headers: { getSetCookie: () => [] },
           text: () => Promise.resolve(gate.body),
         });
       },
@@ -625,13 +668,61 @@ describe('verifyCodeStep', () => {
 
   // The proxy refuses a gate post that carries no Origin, and every gate page
   // is sandboxed into an opaque origin, so `null` is what a browser sends.
-  it('posts the address the way a sandboxed gate page does', async () => {
+  it('lands on the gate first, then posts what the form rendered', async () => {
+    // The whole of the 21 September production failure. The old step skipped
+    // the landing entirely and posted a hand-written body, so it carried no
+    // challenge cookie and no signed field, and the gate refused it with a 401
+    // that read like the product was broken.
+    const { calls, sent } = stubVerify();
+    await run();
+
+    // The GET comes first, and on the LINK'S OWN address — the challenge is a
+    // `__Host-` cookie, so a GET on one host and a POST on another is the same
+    // as having no cookie at all.
+    const landingAt = calls.indexOf(`GET ${SHARE_URL}`);
+    const postAt = calls.indexOf(`POST ${SHARE_URL}/email`);
+    expect(landingAt, 'the step never fetched the gate page').toBeGreaterThanOrEqual(0);
+    expect(postAt, 'the step never posted the gate form').toBeGreaterThan(landingAt);
+
+    const post = sent.find((call) => call.url === `${SHARE_URL}/email`);
+    expect(post?.headers['origin'], 'a sandboxed page posts with a null origin').toBe('null');
+    expect(post?.headers['cookie'], 'the challenge cookie was not carried to the post').toContain(
+      '__Host-hr_vc=',
+    );
+    const body = new URLSearchParams(post?.body ?? '');
+    expect(body.get('t'), 'the signed hidden field was not submitted').toBe(TOKEN);
+    expect(body.get('email')).toBe(READER);
+  });
+
+  it('calls a post without the challenge cookie a JOURNEY bug, not an outage', async () => {
+    // If the landing page sets no cookie, the step has nothing to carry — and
+    // the message has to say that the check is wrong, not the product, or the
+    // next person spends their morning looking at the worker.
+    stubVerify({ landing: { status: 200, body: gatePage, cookie: null } });
+    await expect(run()).rejects.toThrow(/journey bug.*cookie jar/s);
+  });
+
+  it('calls a post without the signed field a JOURNEY bug too', async () => {
+    const noToken = gatePage.replace(/<input type="hidden"[^>]*>/, '');
+    stubVerify({
+      landing: { status: 200, body: noToken, cookie: `__Host-hr_vc=${CHALLENGE}; Path=/` },
+    });
+    await expect(run()).rejects.toThrow(/journey bug.*"t" field/s);
+  });
+
+  it('reads the code page as a real form rather than by its words', async () => {
     const { sent } = stubVerify();
     await run();
-    const post = sent.find((call) => call.url === `${SHARE_URL}/email`);
-    expect(post?.headers['origin']).toBe('null');
-    expect(post?.headers['sec-fetch-site']).toBe('cross-site');
-    expect(post?.body).toBe('email=delivered%2Bverify-journey%40resend.dev');
+    // Nothing is typed into it, but it must be a submittable form carrying the
+    // signed field, not a screen that merely says "check your email".
+    expect(sent.some((call) => call.url === `${SHARE_URL}/email`)).toBe(true);
+  });
+
+  it('reports a 401 from the gate as the submission being refused', async () => {
+    // The exact production symptom, so the message a future reader sees names
+    // the right suspect first.
+    stubVerify({ gate: { status: 401, body: '<h1>View this document.</h1>' } });
+    await expect(run()).rejects.toThrow(/401.*refusing the SUBMISSION/s);
   });
 
   // The failure this step exists for: the page still says "check your email"

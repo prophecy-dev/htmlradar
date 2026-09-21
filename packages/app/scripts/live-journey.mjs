@@ -473,6 +473,113 @@ export function requireMailSink(address) {
 }
 
 /**
+ * A cookie jar, because the gate's defences are built out of cookies.
+ *
+ * The verified gate hands the browser a `__Host-hr_vc` challenge on the page
+ * that renders the form and signs the form's hidden field over it, so a post
+ * without the cookie is refused (see isOwnGatePost and issueGateToken in
+ * packages/proxy/src/auth.ts). `__Host-` cookies are HOST-ONLY, which is the
+ * other half of why this matters here: the API returns links on the account's
+ * default custom domain, so the GET and the POST have to be the same host or
+ * the cookie is simply not ours to send.
+ */
+function readJar(response, jar = new Map()) {
+  for (const line of response.headers.getSetCookie?.() ?? []) {
+    const pair = line.split(';')[0] ?? '';
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq);
+    const value = pair.slice(eq + 1);
+    // An expiry with an empty value is a deletion, which a jar honours.
+    if (value === '') jar.delete(name);
+    else jar.set(name, value);
+  }
+  return jar;
+}
+
+const jarHeader = (jar) => [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+
+/**
+ * The form on a page, as a browser reads it: where it posts, and every hidden
+ * field it carries.
+ *
+ * Parsed rather than assumed. The previous version of this step posted a
+ * hand-written body straight at `/email` with no cookie and no hidden field,
+ * which is not what any browser does — and the gate refused it, correctly, with
+ * a 401 that read like a product failure. Reading the real form means the step
+ * cannot drift away from the page again: if a new hidden field is added
+ * tomorrow, this carries it without being told.
+ */
+export function parseGateForm(html, pageUrl) {
+  const form = /<form\b[^>]*\bmethod=["']?post["']?[^>]*>([\s\S]*?)<\/form>/i.exec(html ?? '');
+  if (!form) throw new Error('the gate page carried no form to submit');
+  const action = /\baction=["']([^"']*)["']/i.exec(form[0])?.[1] ?? '';
+  // The gate escapes every value it echoes back, so submitting one verbatim
+  // would send something the signature was not made over. Same reason, and the
+  // same table, as parseForm above.
+  const unescape = (value) =>
+    value.replace(
+      /&(amp|lt|gt|quot|#39);/g,
+      (_, name) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[name],
+    );
+  const fields = {};
+  for (const input of form[1].matchAll(/<input\b[^>]*>/gi)) {
+    const tag = input[0];
+    if (!/\btype=["']?hidden["']?/i.test(tag)) continue;
+    const name = /\bname=["']([^"']+)["']/i.exec(tag)?.[1];
+    if (name) fields[name] = unescape(/\bvalue=["']([^"']*)["']/i.exec(tag)?.[1] ?? '');
+  }
+  return { action: new URL(action, pageUrl).toString(), fields };
+}
+
+/**
+ * Submit a form the way the sandboxed gate page does.
+ *
+ * `Origin: null` because every gate page is served inside an opaque-origin
+ * sandbox, so a browser posting from one has no origin to name — which
+ * isOwnGatePost accepts and which a client sending no Origin at all is refused
+ * for. `redirect: manual` because the PLAIN e-mail gate answers 303, and
+ * following it would hand back a healthy-looking 200 from the wrong page.
+ */
+async function submitForm({ action, fields }, jar, extra = {}) {
+  const body = new URLSearchParams();
+  for (const [name, value] of Object.entries(fields)) body.set(name, value);
+  for (const [name, value] of Object.entries(extra)) body.set(name, value);
+
+  // The two things whose absence made the old step fail against a healthy
+  // product. Named here so a future edit that drops either is a JOURNEY BUG
+  // with a message that says so, rather than a red step that reads like an
+  // outage.
+  if (!jar.size) {
+    throw new Error(
+      'journey bug: posting the gate form with an empty cookie jar. The challenge cookie is ' +
+        'set on the page that renders the form and the form is signed over it, so a post ' +
+        'without it is refused — carry the cookies from the GET to the POST, on the same host.',
+    );
+  }
+  if (!body.get('t')) {
+    throw new Error(
+      'journey bug: posting the gate form without its signed "t" field. It is a hidden input ' +
+        'in the rendered form and the gate refuses a post without it — parse the form and ' +
+        'submit every hidden field it carries.',
+    );
+  }
+
+  const response = await fetch(action, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'null',
+      cookie: jarHeader(jar),
+    },
+    body,
+    redirect: 'manual',
+  });
+  readJar(response, jar);
+  return { status: response.status, html: await response.text() };
+}
+
+/**
  * Step 4 — a verification code, all the way to the mail provider.
  *
  * What this catches and nothing else does: a revoked or expired RESEND_API_KEY
@@ -553,33 +660,55 @@ export async function verifyCodeStep(cfg, sleep = (ms) => new Promise((r) => set
   const slug = new URL(share.url).pathname.split('/').filter(Boolean).pop();
   const notes = [];
   try {
-    // What a real gate page sends. Every gate page is served inside an
-    // opaque-origin sandbox, so a browser posting from one sends
-    // `Origin: null` with `Sec-Fetch-Site: cross-site` — see isOwnGatePost in
-    // packages/proxy/src/auth.ts, which accepts exactly that and refuses a
-    // client that sends no Origin at all. `redirect: manual` because the
-    // PLAIN e-mail gate answers 303, and following it would hand back a
-    // healthy-looking 200 from the wrong page.
-    const posted = await fetch(`${share.url}/email`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        origin: 'null',
-        'sec-fetch-site': 'cross-site',
-      },
-      body: new URLSearchParams({ email: reader }),
-      redirect: 'manual',
-    });
-    const page = await posted.text();
-    if (posted.status !== 200 || !page.includes(`/r/${slug}/verify`)) {
+    // EXACTLY WHAT A BROWSER DOES, and the previous version did none of it.
+    //
+    // It posted a hand-written body straight at `/email` — no GET first, so no
+    // challenge cookie, and no `t`, because `t` only exists in the rendered
+    // form. The gate refused that, correctly, and the step reported "nobody
+    // can be asked for a code on this link", which reads like the product is
+    // broken when the product is fine. So: land on the link's own address,
+    // keep what it sets, read the form it rendered, and send that back.
+    //
+    // ON THE LINK'S OWN HOST. `share.url` is whatever host the link was issued
+    // on — for this account that is the default custom domain — and the
+    // challenge is a `__Host-` cookie, so it belongs to that exact hostname.
+    // Fetching the gate on one host and posting to another is the same as
+    // having no cookie at all.
+    const landing = await fetch(share.url, { redirect: 'manual' });
+    const landingHtml = await landing.text();
+    const jar = readJar(landing);
+    if (landing.status !== 200) {
+      throw new Error(`${share.url} answered ${landing.status} instead of the gate`);
+    }
+    if (!landingHtml.includes('name="email"')) {
+      throw new Error(
+        `${share.url} answered 200 but not the e-mail gate — the link may not require an address`,
+      );
+    }
+
+    const emailForm = parseGateForm(landingHtml, share.url);
+    const posted = await submitForm(emailForm, jar, { email: reader });
+    if (posted.status !== 200 || !posted.html.includes(`/r/${slug}/verify`)) {
       throw new Error(
         `the gate answered ${posted.status} without a code form — ` +
           (posted.status === 303
             ? 'a 303 is the plain e-mail gate letting the reader straight in, so verify_email was ' +
               'not stored or the deployed worker predates the verified gate'
-            : 'nobody can be asked for a code on this link'),
+            : posted.status === 401
+              ? 'a 401 here is the gate refusing the SUBMISSION rather than the address: the ' +
+                'challenge cookie or the signed "t" field did not arrive, which is a journey bug ' +
+                'before it is a product one'
+              : 'nobody can be asked for a code on this link'),
       );
     }
+    // The code form is parsed too, even though nothing is typed into it. It is
+    // the cheapest possible proof that the page the reader would type into is
+    // a real, submittable form rather than a screen that merely says so.
+    const codeForm = parseGateForm(posted.html, share.url);
+    if (!codeForm.fields['t'] || !codeForm.fields['email']) {
+      throw new Error('the code page carried no signed field, so no code could be submitted');
+    }
+
     notes.push(`${new URL(share.url).host} served the code page`);
 
     // THE PAGE CANNOT TELL US ANY OF THIS, so the database has to.
