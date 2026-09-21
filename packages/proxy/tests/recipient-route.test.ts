@@ -288,3 +288,17 @@ describe('CSP sandbox on every proxy response', () => {
     expect(csp).not.toContain('allow-same-origin');
   });
 });
+
+describe('attachments of a deleted document', () => {
+  it('404 on a live link once the document is deleted, before any attachment lookup', async () => {
+    const store = await import('../src/store.js');
+    vi.mocked(store.getDocument).mockResolvedValueOnce({
+      ...doc,
+      deleted_at: '2026-09-21T00:00:00.000Z',
+    } as never);
+    vi.mocked(store.getAttachment).mockClear();
+    const res = await get('/r/acme-proposal/m/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(res.status).toBe(404);
+    expect(store.getAttachment).not.toHaveBeenCalled();
+  });
+});

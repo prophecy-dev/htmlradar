@@ -252,6 +252,18 @@ describe('startSession', () => {
     ]);
   });
 
+  it('an address on allowed_emails is tracked even when its domain is not listed', async () => {
+    seedShare(db, {
+      slug: 'mixed',
+      require_email: true,
+      allowed_email_domains: ['somnia.network'],
+      allowed_emails: ['VC@fund.com'],
+    });
+    expect(await code(start('mixed', { p_email: 'vc@FUND.com' }))).toBe('ok');
+    expect(await code(start('mixed', { p_email: 'ann@somnia.network' }))).toBe('ok');
+    expect(await code(start('mixed', { p_email: 'x@fund.com' }))).toBe('P0007');
+  });
+
   it('rate-limits one identity to five starts a minute', async () => {
     seedShare(db, { slug: 'open' });
     for (let i = 0; i < 5; i++) await start('open');
@@ -349,6 +361,17 @@ describe('updateSession and the first-read alert', () => {
     expect(db.rows(`SELECT status, error_message FROM notifications_log`)).toEqual([
       { status: 'skipped', error_message: 'repeat open by same recipient on this document' },
     ]);
+  });
+
+  it('two sessions of one reader reporting at once announce once (review, 21 Sep)', async () => {
+    seedShare(db, { slug: 'a' });
+    const s1 = await start('a');
+    const s2 = await start('a');
+    const [r1, r2] = await Promise.all([
+      upd(s1.session_id, s1.token, { p_active_seconds: 5 }),
+      upd(s2.session_id, s2.token, { p_active_seconds: 5 }),
+    ]);
+    expect([r1.alert, r2.alert].filter(Boolean)).toHaveLength(1);
   });
 
   it('skips when the share has alerts off, and for the owner reading their own link', async () => {

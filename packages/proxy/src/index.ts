@@ -856,6 +856,9 @@ async function handleAttachmentDownload(
   if (!share) return notFound();
   if (share.revoked_at) return notFound();
   if (share.expires_at && new Date(share.expires_at).getTime() < Date.now()) return notFound();
+  // A deleted document takes its attachments with it, even on a live link.
+  const doc = await getDocument(env, share.document_id);
+  if (!doc || doc.deleted_at) return notFound();
 
   if (share.require_password) {
     const cookie = await verifyAuthCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET);

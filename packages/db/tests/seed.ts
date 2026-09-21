@@ -35,6 +35,7 @@ export interface ShareOpts {
   verify_email?: boolean;
   password_hash?: string | null;
   allowed_email_domains?: string[] | null;
+  allowed_emails?: string[] | null;
   notify_first_open?: boolean;
   revoked_at?: string | null;
   expires_at?: string | null;
@@ -46,8 +47,9 @@ export function seedShare(db: FakeD1, o: ShareOpts): string {
   db.rows(
     `INSERT INTO document_shares
        (id, document_id, owner_id, slug, require_email, verify_email, require_password,
-        password_hash, allowed_email_domains, notify_first_open, revoked_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        password_hash, allowed_email_domains, allowed_emails, notify_first_open, revoked_at,
+        expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     o.document_id ?? DOC.id,
     OWNER.id,
@@ -57,6 +59,7 @@ export function seedShare(db: FakeD1, o: ShareOpts): string {
     o.password_hash ? 1 : 0,
     o.password_hash ?? null,
     o.allowed_email_domains ? JSON.stringify(o.allowed_email_domains) : null,
+    o.allowed_emails ? JSON.stringify(o.allowed_emails) : null,
     o.notify_first_open === false ? 0 : 1,
     o.revoked_at ?? null,
     o.expires_at ?? null,

@@ -402,8 +402,16 @@ export async function startSession(db: DB, input: StartSessionInput): Promise<St
     const raw = (input.p_email ?? '').trim();
     if (!raw) throw new RpcFailure('P0005', 'email_required');
     if (!EMAIL_RE.test(raw)) throw new RpcFailure('P0006', 'email_invalid');
-    const domains = share.allowed_email_domains ?? [];
-    if (domains.length > 0 && !domains.includes(raw.toLowerCase().split('@')[1] ?? '')) {
+    // The proxy's gate rule: with any allow-list set, the address passes when
+    // it is on the address list OR its domain is on the domain list.
+    const lower = raw.toLowerCase();
+    const domains = (share.allowed_email_domains ?? []).map((d) => d.toLowerCase());
+    const emails = (share.allowed_emails ?? []).map((e) => e.toLowerCase());
+    if (
+      (domains.length > 0 || emails.length > 0) &&
+      !emails.includes(lower) &&
+      !domains.includes(lower.split('@')[1] ?? '')
+    ) {
       throw new RpcFailure('P0007', 'email_domain_not_allowed');
     }
     email = raw.toLowerCase();
@@ -645,27 +653,29 @@ async function decideFirstReadAlert(db: DB, sessionId: string): Promise<FirstRea
   // told about: only sessions that actually notified count (upstream 054).
   const viewerEmail = r['viewer_email'] as string | null;
   const fingerprint = r['fingerprint'] as string | null;
-  const prior = await db
-    .prepare(
-      `SELECT s.id FROM sessions s
-         JOIN viewers v ON v.id = s.viewer_id
-         JOIN document_shares ds ON ds.id = s.share_id
-        WHERE ds.document_id = ?1 AND s.notification_sent_at IS NOT NULL AND s.id <> ?2
-          AND ${viewerEmail ? 'lower(v.email) = lower(?3)' : 'v.fingerprint = ?3'}
-        LIMIT 1`,
-    )
-    .bind(r['document_id'], sessionId, viewerEmail ?? fingerprint ?? '')
-    .first<{ id: string }>();
-  if (prior) return skip('repeat open by same recipient on this document');
   if (toBool(r['is_internal'])) return skip('viewer marked internal');
 
+  // Check-for-an-earlier-alert and claim in ONE statement. D1 runs statements
+  // one at a time, so two sessions of the same reader (two tabs, a heartbeat
+  // racing a page-close flush) cannot both pass the check and both claim —
+  // upstream 054 held an advisory lock on (document, reader) for this.
+  const identity = viewerEmail ? 'lower(v.email) = lower(?4)' : 'v.fingerprint = ?4';
   const claimed = await db
     .prepare(
-      `UPDATE sessions SET notification_sent_at = ?2 WHERE id = ?1 AND notification_sent_at IS NULL`,
+      `UPDATE sessions SET notification_sent_at = ?2
+        WHERE id = ?1 AND notification_sent_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM sessions s
+              JOIN viewers v ON v.id = s.viewer_id
+              JOIN document_shares ds ON ds.id = s.share_id
+             WHERE ds.document_id = ?3 AND s.notification_sent_at IS NOT NULL
+               AND s.id <> ?1 AND ${identity})`,
     )
-    .bind(sessionId, nowIso())
+    .bind(sessionId, nowIso(), r['document_id'], viewerEmail ?? fingerprint ?? '')
     .run();
-  if ((claimed.meta.changes ?? 0) === 0) return null;
+  if ((claimed.meta.changes ?? 0) === 0) {
+    return skip('repeat open by same recipient on this document');
+  }
 
   return {
     sessionId,
