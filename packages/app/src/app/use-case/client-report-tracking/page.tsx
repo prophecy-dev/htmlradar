@@ -55,9 +55,9 @@ const REPORT_SECTIONS: SectionRow[] = [
 ];
 
 export const metadata = pageMeta({
-  title: 'Send a Client Report and Know If It Was Read | HTMLRadar',
+  title: 'Share an HTML Report With Clients | HTMLRadar',
   description:
-    'Send a client report as a tracked web page. See when each client opened it, which sections they read, and for how long. Free for two links, then $15 a month.',
+    'Send an HTML report to a client as a tracked link, not an attachment. See who opened it, which sections they read, and for how long. Free for two links.',
   path: '/use-case/client-report-tracking',
 });
 
@@ -75,19 +75,25 @@ export default function ClientReportTrackingPage() {
           />
           <SectionMark>HTMLRadar · Use case</SectionMark>
           <h1 className="text-letterpress mt-6 font-serif text-[40px] font-normal leading-[1.05] tracking-tightest text-ink md:text-[56px]">
-            How do I send a client report and know if they read it?
+            How do I share an HTML report with clients?
           </h1>
           <DirectAnswer updated="September 2026">
-            Send the report as a web page behind a private link for each client, not as an
+            Send an HTML report to a client as a private link for each client rather than as an
             attachment. HTMLRadar hosts the file, e-mails you the first time a client opens it — at
             the e-mail gate, or after five seconds on an ungated link — and shows which sections
             they read. Free for two tracked links, then $15 a month.
           </DirectAnswer>
           <p className="mt-6 max-w-2xl text-[16px] leading-relaxed text-ink-soft">
+            An HTML report sent as an attachment is a file that may not open, may not render, and
+            tells you nothing once it has gone. Sharing it as a link keeps the page a page — charts,
+            layout and links all still working — and turns &ldquo;did they read it?&rdquo; into a
+            question with an answer.
+          </p>
+          <p className="mt-4 max-w-2xl text-[16px] leading-relaxed text-ink-soft">
             You send the monthly report on the first. By the tenth nobody has replied, and on the
-            call someone asks a question the report answered on page two. An attachment gives you
-            nothing to go on, so the honest answer to &ldquo;did they read it?&rdquo; is that you
-            have never once known.
+            call someone asks a question the report answered in its second section. An attachment
+            gives you nothing to go on, so the honest answer to &ldquo;did they read it?&rdquo; is
+            that you have never once known.
           </p>
 
           <section className="mt-12">
@@ -100,7 +106,14 @@ export default function ClientReportTrackingPage() {
               the engagement ends, revoke the link and the report goes dark — it stops being served,
               not merely hidden. Next month you replace the file rather than send a new link, so
               each client keeps one address all year and you keep one running record of their
-              reading.
+              reading. The guide on{' '}
+              <Link
+                href="/for/update-a-document-after-sending"
+                className="text-signal-dark hover:underline"
+              >
+                updating a document after you have sent it
+              </Link>{' '}
+              covers what stays the same and what does not.
             </p>
             <div className="mt-6">
               <ShareStack shares={CLIENT_SHARES} />
@@ -221,6 +234,13 @@ export default function ClientReportTrackingPage() {
               ,{' '}
               <Link href="/use-case/track-html-deck" className="text-signal-dark hover:underline">
                 tracking any HTML document
+              </Link>
+              ,{' '}
+              <Link
+                href="/for/update-a-document-after-sending"
+                className="text-signal-dark hover:underline"
+              >
+                updating a report after you have sent it
               </Link>
               , and{' '}
               <Link href="/compare/docsend" className="text-signal-dark hover:underline">

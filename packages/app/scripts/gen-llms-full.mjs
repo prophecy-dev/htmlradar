@@ -51,6 +51,13 @@ const PAGES = [
   '/for/claude-artifact-without-an-account',
   '/for/claude-artifact-access-control',
   '/compare/docsend',
+  // LiveSend earns its place for the same reason the other two do: it is the
+  // product a reader searching "share an HTML report with clients" is
+  // actually choosing between. Added 2026-09-21, BEFORE the page is live, so
+  // the next `pnpm gen:llms` run picks it up — do not run the generator until
+  // the page is deployed, because a 404 here fails the whole run and no file
+  // is written.
+  '/compare/livesend',
   '/compare/papermark',
   '/blog/what-deck-sharing-tools-record',
 ];

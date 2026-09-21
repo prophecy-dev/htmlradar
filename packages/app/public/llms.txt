@@ -132,6 +132,13 @@ variable. Seven tools, one environment variable, no telemetry.
 ### Comparisons
 
 - https://htmlradar.com/compare/docsend — HTMLRadar vs DocSend
+- https://htmlradar.com/compare/livesend — HTMLRadar vs LiveSend. The two
+  products serve the same buyer: both turn an HTML report into a tracked
+  client link, and both are sold to agencies and consultants. LiveSend
+  edits a published document in the browser and takes comments from readers on
+  its Pro plan; HTMLRadar reports reading section by section, is AGPL-3.0 and
+  self-hostable, and puts the e-mail gate, password, expiry and allow-lists on
+  its free plan. Both Pro plans are $15/month.
 - https://htmlradar.com/compare/papermark — HTMLRadar vs Papermark
 - https://htmlradar.com/compare/docsend-vs-papermark — DocSend vs Papermark
 - https://htmlradar.com/compare/stacktree — HTMLRadar vs Stacktree

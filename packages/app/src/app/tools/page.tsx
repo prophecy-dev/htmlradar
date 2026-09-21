@@ -48,6 +48,12 @@ const GUIDES = [
       'Claude offers audience levels, not a password or a date. What it does offer, and how to add a real gate.',
   },
   {
+    href: '/for/update-a-document-after-sending',
+    title: 'Update a document after you have sent it',
+    description:
+      'Replace the contents behind a link you already sent. What stays the same, what does not, and the limits.',
+  },
+  {
     href: '/for/claude-code',
     title: 'HTMLRadar for Claude Code',
     description: 'Share the HTML that Claude Code writes, straight from the terminal session.',

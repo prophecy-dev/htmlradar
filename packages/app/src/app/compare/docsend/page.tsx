@@ -446,6 +446,10 @@ export default function ComparePage() {
                 HTMLRadar vs Papermark
               </Link>
               ,{' '}
+              <Link href="/compare/livesend" className="text-signal-dark hover:underline">
+                HTMLRadar vs LiveSend
+              </Link>
+              ,{' '}
               <Link
                 href="/compare/docsend-vs-papermark"
                 className="text-signal-dark hover:underline"

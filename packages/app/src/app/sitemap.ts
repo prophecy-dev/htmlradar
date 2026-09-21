@@ -59,6 +59,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${baseUrl}/compare/stacktree`, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${baseUrl}/compare/tiiny-host`, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${baseUrl}/compare/hummingdeck`, changeFrequency: 'weekly', priority: 0.5 },
+    // Published 2026-09-21. LiveSend competes for the buyer's own words
+    // ("share HTML report with clients"), which is why this one is 0.6 like
+    // DocSend rather than 0.5. Facts sourced in
+    // docs/workstreams/seo-and-indexing/COMPARE-LIVESEND-EVIDENCE-2026-09-21.md.
+    {
+      url: `${baseUrl}/compare/livesend`,
+      lastModified: '2026-09-21',
+      changeFrequency: 'weekly',
+      priority: 0.6,
+    },
     {
       url: `${baseUrl}/use-case/pitch-deck-tracking`,
       changeFrequency: 'monthly',
@@ -74,10 +84,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'monthly',
       priority: 0.6,
     },
-    // Published 2026-09-04.
+    // Published 2026-09-04; rewritten 2026-09-21 around the buyer's own
+    // phrase, "share an HTML report with clients".
     {
       url: `${baseUrl}/use-case/client-report-tracking`,
-      lastModified: '2026-09-04',
+      lastModified: '2026-09-21',
       changeFrequency: 'monthly',
       priority: 0.7,
     },
@@ -107,6 +118,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: '2026-09-21',
       changeFrequency: 'monthly',
       priority: 0.7,
+    },
+    // Published 2026-09-21: what replacing a document does to the link, the
+    // reading already collected and the section names.
+    {
+      url: `${baseUrl}/for/update-a-document-after-sending`,
+      lastModified: '2026-09-21',
+      changeFrequency: 'monthly',
+      priority: 0.6,
     },
     { url: `${baseUrl}/for/reveal-js`, changeFrequency: 'monthly', priority: 0.6 },
     {

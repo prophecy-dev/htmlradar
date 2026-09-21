@@ -235,6 +235,13 @@ export default function ClaudeArtifactsPage() {
               >
                 turn a Claude artifact into a link
               </Link>
+              ,{' '}
+              <Link
+                href="/for/update-a-document-after-sending"
+                className="text-signal-dark hover:underline"
+              >
+                updating a document after you have sent it
+              </Link>
               , and{' '}
               <Link href="/tools" className="text-signal-dark hover:underline">
                 all the free HTML tools

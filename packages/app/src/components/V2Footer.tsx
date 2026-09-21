@@ -61,6 +61,7 @@ export function V2Footer() {
         <FooterGroup title="Compare">
           <Link href="/compare/docsend">vs DocSend</Link>
           <Link href="/compare/papermark">vs Papermark</Link>
+          <Link href="/compare/livesend">vs LiveSend</Link>
           <Link href="/compare/peony">vs Peony</Link>
           <Link href="/compare/stacktree">vs Stacktree</Link>
           <Link href="/compare/tiiny-host">vs Tiiny Host</Link>
