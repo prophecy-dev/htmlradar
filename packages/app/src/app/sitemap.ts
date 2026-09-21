@@ -87,6 +87,27 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'monthly',
       priority: 0.7,
     },
+    // Published 2026-09-21: the three question pages of the "AI-made HTML to
+    // a tracked link" cluster, sourced against Anthropic's help centre in
+    // docs/workstreams/seo-and-indexing/ARTIFACT-PAGES-EVIDENCE-2026-09-21.md.
+    {
+      url: `${baseUrl}/for/claude-artifact-expiry`,
+      lastModified: '2026-09-21',
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    },
+    {
+      url: `${baseUrl}/for/claude-artifact-without-an-account`,
+      lastModified: '2026-09-21',
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    },
+    {
+      url: `${baseUrl}/for/claude-artifact-access-control`,
+      lastModified: '2026-09-21',
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    },
     { url: `${baseUrl}/for/reveal-js`, changeFrequency: 'monthly', priority: 0.6 },
     {
       url: `${baseUrl}/mcp`,

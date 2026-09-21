@@ -30,6 +30,24 @@ const GUIDES = [
       'What happens after you send an artifact, and how a tracked link answers whether it was read.',
   },
   {
+    href: '/for/claude-artifact-expiry',
+    title: 'Do Claude artifacts expire?',
+    description:
+      'What Anthropic documents about how long a shared artifact link lasts, and what actually ends access.',
+  },
+  {
+    href: '/for/claude-artifact-without-an-account',
+    title: 'Share an artifact with someone who has no Claude account',
+    description:
+      'Whether your reader needs an account depends on how the artifact was shared. Both rules, and the route that always works.',
+  },
+  {
+    href: '/for/claude-artifact-access-control',
+    title: 'Password or expiry on a Claude artifact',
+    description:
+      'Claude offers audience levels, not a password or a date. What it does offer, and how to add a real gate.',
+  },
+  {
     href: '/for/claude-code',
     title: 'HTMLRadar for Claude Code',
     description: 'Share the HTML that Claude Code writes, straight from the terminal session.',

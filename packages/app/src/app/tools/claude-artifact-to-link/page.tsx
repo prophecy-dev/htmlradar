@@ -158,6 +158,27 @@ export default async function ClaudeArtifactToLinkToolPage({
               </Link>
               .
             </p>
+            <p className="mt-4 text-[14px] leading-relaxed text-ink-soft">
+              Before you send it:{' '}
+              <Link href="/for/claude-artifact-expiry" className="text-signal-dark hover:underline">
+                do Claude artifacts expire
+              </Link>
+              ,{' '}
+              <Link
+                href="/for/claude-artifact-without-an-account"
+                className="text-signal-dark hover:underline"
+              >
+                sharing one with someone who has no Claude account
+              </Link>
+              , and{' '}
+              <Link
+                href="/for/claude-artifact-access-control"
+                className="text-signal-dark hover:underline"
+              >
+                putting a password or an expiry date on one
+              </Link>
+              .
+            </p>
           </div>
         </article>
       </main>
