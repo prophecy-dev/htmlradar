@@ -23,7 +23,11 @@ The changes from upstream:
 | `packages/tracker` | bundled into the proxy   |                                                 |
 | `packages/mcp`     | npm `htmlradar-mcp`      | set `HTMLRADAR_API_URL` to the dashboard origin |
 
-## Deploy (test: Somnia account)
+## Deploy (Somnia account)
+
+Live: recipient links on `https://deck.prophecyhosting.com` (Worker `htmlradar-proxy`), dashboard on
+`https://radar.prophecyhosting.com` (Worker `htmlradar-app`); both custom domains are attached to
+the Workers in the Cloudflare dashboard. They move to hive.land once those domains are ready.
 
 Credentials are in the gitignored repo-root `.env` (`SOM_CLOUDFLARE_API_TOKEN`,
 `SOM_CLOUDFLARE_ACCOUNT_ID`, `HTMLRADAR_SESSION_SECRET`).
@@ -37,12 +41,13 @@ export CLOUDFLARE_API_TOKEN=$SOM_CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=$SOM
 (cd packages/proxy && npx wrangler d1 migrations apply htmlradar --remote)
 
 # recipient worker
-(cd packages/proxy && npx wrangler deploy --var SHARE_HOST:<host> --var APP_ORIGIN:<dashboard origin> --var MAIL_FROM:<addr>)
+# hosts come from wrangler.jsonc vars (deck/radar.prophecyhosting.com for now)
+(cd packages/proxy && npx wrangler deploy)
 (cd packages/proxy && printf %s "$HTMLRADAR_SESSION_SECRET" | npx wrangler secret put SESSION_SECRET)
 
 # dashboard: Worker htmlradar-app (Next 16 via OpenNext). opennextjs-cloudflare does
 # not build on native Windows; run this from WSL/Linux/CI
-NEXT_PUBLIC_SHARE_ORIGIN=<share origin> pnpm --filter @htmlradar/app deploy
+NEXT_PUBLIC_SHARE_ORIGIN=https://deck.prophecyhosting.com pnpm --filter @htmlradar/app deploy
 # the SAME secret on the dashboard Worker, or "Preview as you" fails
 (cd packages/app && printf %s "$HTMLRADAR_SESSION_SECRET" | npx wrangler secret put SESSION_SECRET)
 ```

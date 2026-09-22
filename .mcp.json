@@ -4,6 +4,7 @@
       "command": "npx",
       "args": ["-y", "htmlradar-mcp"],
       "env": {
+        "HTMLRADAR_API_URL": "https://radar.prophecyhosting.com",
         "HTMLRADAR_API_KEY": "${HTMLRADAR_API_KEY}"
       }
     }
