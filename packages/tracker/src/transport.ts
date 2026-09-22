@@ -1,8 +1,9 @@
 import type { FlushPayload, Geo } from './types.js';
 
-// The tracker's two calls, to the proxy worker that served the document:
+// The tracker's calls, to the proxy worker that served the document:
 //   POST {endpoint}/t/start_session
 //   POST {endpoint}/t/update_session
+//   POST {endpoint}/t/comment
 // Same request bodies and P-code errors the Postgres RPCs used, so the gate's
 // messages still map (see humanError in index.ts).
 //
@@ -30,6 +31,14 @@ export interface StartSessionResult {
   token: string;
   documentId: string;
   documentVersion: number;
+}
+
+export interface CommentInput {
+  sessionId: string;
+  token: string;
+  sectionId: string | null;
+  sectionTitle: string | null;
+  body: string;
 }
 
 export class RpcError extends Error {
@@ -102,7 +111,19 @@ export function createTransport(opts: RpcOptions) {
     );
   }
 
-  return { startSession, updateSession };
+  // Never keep-alive: a comment is sent from a click the reader is watching,
+  // and they are shown whether it arrived.
+  async function comment(input: CommentInput): Promise<void> {
+    await call('comment', {
+      p_session_id: input.sessionId,
+      p_token: input.token,
+      p_section_id: input.sectionId,
+      p_section_title: input.sectionTitle,
+      p_body: input.body,
+    });
+  }
+
+  return { startSession, updateSession, comment };
 }
 
 function extractCode(body: string): string | null {

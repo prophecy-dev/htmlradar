@@ -16,9 +16,10 @@ import { normalizeTab, type TabKey } from './tab-key';
 import { ShareCardList } from './ShareCardList';
 import { SectionTimeBarChart, type SectionTotal } from './SectionTimeBarChart';
 import { ViewerInsights } from '../ViewerInsights';
+import { ReaderComments } from '../ReaderComments';
 import { SharesTable } from '../SharesTable';
 import { type DocumentVersionRow } from '../VersionHistoryPopover';
-import type { Viewer, Session, SectionEvent } from '@/lib/types';
+import type { Viewer, Session, SectionEvent, ReaderComment } from '@/lib/types';
 import type { ShareRow, ShareAnalyticsData } from '../share-types';
 import { FileText, Globe } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -45,6 +46,8 @@ interface DocTabsClientProps {
   verifiedViewerIds: string[];
   sessions: Session[];
   events: SectionEvent[];
+  /** Notes verified readers left for the owner, newest first. */
+  comments: ReaderComment[];
   shareSlugs: Record<string, string>;
   shareLabels: Record<string, string | null>;
   toggleViewerInternalAction: (formData: FormData) => Promise<void>;
@@ -215,6 +218,7 @@ export function DocTabsClient(props: DocTabsClientProps) {
             viewers={props.viewers}
             sessions={props.sessions}
             events={props.events}
+            comments={props.comments}
             shareSlugs={props.shareSlugs}
             shareLabels={props.shareLabels}
             toggleViewerInternalAction={props.toggleViewerInternalAction}
@@ -323,6 +327,7 @@ function AnalyticsPanel({
   verifiedViewerIds,
   sessions,
   events,
+  comments,
   shareSlugs,
   shareLabels,
   toggleViewerInternalAction,
@@ -336,6 +341,7 @@ function AnalyticsPanel({
   verifiedViewerIds: string[];
   sessions: Session[];
   events: SectionEvent[];
+  comments: ReaderComment[];
   shareSlugs: Record<string, string>;
   shareLabels: Record<string, string | null>;
   toggleViewerInternalAction: (formData: FormData) => Promise<void>;
@@ -346,6 +352,11 @@ function AnalyticsPanel({
 }) {
   return (
     <section className="space-y-8">
+      {/* First, and outside the "waiting for the first read" branch: somebody
+          wrote to you, which is worth more than any number below it, and a
+          comment must not be hidden because the reads behind it were filtered
+          out as internal or bounced. Renders nothing when there are none. */}
+      <ReaderComments comments={comments} />
       {!hasOpens ? (
         <>
           <SectionHead title="Who's reading." hint="Live the moment the first recipient opens" />

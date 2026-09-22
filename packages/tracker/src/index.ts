@@ -10,7 +10,10 @@
 //   4. Start the session, install the global API. The Promise returned to
 //      `window.HTMLRadar.ready` resolves once the first RPC succeeds, so
 //      hosts can chain `await window.HTMLRadar.ready` before customizing.
+//   5. Once there is a session, and only where the proxy says comments are
+//      on, mount the reader's comment boxes.
 
+import { mountComments } from './comments.js';
 import { resolveConfig } from './config.js';
 import { showEmailGate } from './gate.js';
 import { getFingerprint, getStoredEmail, isOptedOut, setStoredEmail } from './identity.js';
@@ -43,6 +46,31 @@ function humanError(err: unknown): string {
         return "Disposable email addresses aren't accepted here. Use your work email.";
       default:
         return "Something didn't work. Try again, or contact the sender.";
+    }
+  }
+  return "We couldn't reach the server. Check your connection and try again.";
+}
+
+// The same job for the comment box, whose refusals come back on codes the
+// gate never sees. Kept beside humanError so every message a recipient can be
+// shown is in one place.
+function commentError(err: unknown): string {
+  if (err instanceof RpcError) {
+    switch (err.code) {
+      case 'P0001':
+        return 'That is a lot of comments at once. Try again in a few minutes.';
+      case 'P0003':
+      case 'P0004':
+        return 'The sender has switched this link off.';
+      case 'P0010':
+        return 'This reading session has expired. Reload the page and send it again.';
+      case 'P0011':
+      case 'P0012':
+        return 'Only a reader who confirmed their address with a code can comment here.';
+      case 'P0013':
+        return 'Write something first.';
+      default:
+        return "That didn't send. Try again, or reply to the sender by email.";
     }
   }
   return "We couldn't reach the server. Check your connection and try again.";
@@ -140,4 +168,35 @@ async function boot(): Promise<void> {
   });
 
   installGlobalApi({ session, ready, version: VERSION });
+
+  // The comment box signs what it sends with the live session, so it is
+  // mounted off `ready` and not at boot: before start_session returns there is
+  // nothing to sign with, and a reader who bounced during the warm-up (ready
+  // resolves null) is never offered a box at all. The proxy decides whether
+  // there is one — this flag arrives set only on a verified link read by a
+  // reader who proved their address.
+  if (config.comments.enabled) {
+    void ready
+      .then((info) => {
+        if (!info) return;
+        const transport = createTransport({ endpoint: config.endpoint });
+        mountComments({
+          anchors: session.sectionAnchors(),
+          send: async (draft) => {
+            const creds = session.credentials();
+            if (!creds) return commentError(new RpcError('P0010', 'invalid_token'));
+            try {
+              await transport.comment({ ...creds, ...draft });
+              return null;
+            } catch (err) {
+              return commentError(err);
+            }
+          },
+        });
+      })
+      .catch(() => {
+        // The session failed to start; its own error path has already been
+        // taken (see above) and there is nothing to comment against.
+      });
+  }
 }

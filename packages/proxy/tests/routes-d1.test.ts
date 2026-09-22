@@ -179,6 +179,94 @@ describe('the tracker endpoints', () => {
   });
 });
 
+describe('the comment endpoint', () => {
+  // The reader has already been through the gate by the time the tracker can
+  // post: the verification row is what that step leaves behind, and the
+  // session is what the tracker holds.
+  async function verifiedSession(e: Env): Promise<{ session_id: string; token: string }> {
+    seedShare(db, { slug: 'rfp', require_email: true, verify_email: true });
+    db.rows(
+      `INSERT INTO share_email_verifications (share_id, email) VALUES ('share-rfp', 'buyer@acme.test')`,
+    );
+    return (await (
+      await post('/t/start_session', { p_share_slug: 'rfp', p_email: 'buyer@acme.test' }, {}, e)
+    ).json()) as { session_id: string; token: string };
+  }
+
+  it('stores the comment and tells the sender, after the reply', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    const e = env({ TELEGRAM_BOT_TOKEN: 'bot-token', APP_ORIGIN: 'https://radar.example' });
+    const s = await verifiedSession(e);
+
+    const res = await post(
+      '/t/comment',
+      {
+        p_session_id: s.session_id,
+        p_token: s.token,
+        p_section_id: 'pricing',
+        p_section_title: 'Pricing',
+        p_body: '  Can you break out the year-two number?  ',
+      },
+      {},
+      e,
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(db.rows(`SELECT section_id, section_title, body FROM document_comments`)).toEqual([
+      {
+        section_id: 'pricing',
+        section_title: 'Pricing',
+        body: 'Can you break out the year-two number?',
+      },
+    ]);
+
+    expect(SENT).toEqual([
+      { to: OWNER.email, subject: `buyer@acme.test commented on ${DOC.title}` },
+    ]);
+    const telegram = fetchSpy.mock.calls.find((c) => String(c[0]).includes('sendMessage'));
+    expect(String((telegram?.[1] as RequestInit | undefined)?.body)).toContain(
+      'commented on Pricing',
+    );
+    expect(db.rows(`SELECT kind, channel, status FROM notifications_log ORDER BY channel`)).toEqual(
+      [
+        { kind: 'comment', channel: 'email', status: 'delivered' },
+        { kind: 'comment', channel: 'telegram', status: 'delivered' },
+      ],
+    );
+  });
+
+  it('refuses a reader who never proved their address, and tells nobody', async () => {
+    seedShare(db, { slug: 'open-rfp', require_email: true, verify_email: true });
+    const s = (await (
+      await post('/t/start_session', { p_share_slug: 'open-rfp', p_email: 'walkin@acme.test' })
+    ).json()) as { session_id: string; token: string };
+    const res = await post('/t/comment', {
+      p_session_id: s.session_id,
+      p_token: s.token,
+      p_body: 'Hello?',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'P0012' });
+    expect(db.rows(`SELECT count(*) AS n FROM document_comments`)).toEqual([{ n: 0 }]);
+    expect(SENT).toEqual([]);
+  });
+
+  it('refuses a comment carrying the wrong token', async () => {
+    const e = env();
+    const s = await verifiedSession(e);
+    const res = await post(
+      '/t/comment',
+      { p_session_id: s.session_id, p_token: 'f'.repeat(64), p_body: 'Hello?' },
+      {},
+      e,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'P0010' });
+  });
+});
+
 describe('the unfurl card', () => {
   it("gives a crawler the sender's card and nothing else", async () => {
     seedShare(db, { slug: 'open' });
