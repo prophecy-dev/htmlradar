@@ -1,5 +1,12 @@
 # htmlradar-mcp
 
+> **Somnia fork.** This build has no default server: `HTMLRADAR_API_URL` is required and is
+> `https://radar.prophecyhosting.com` for us. The commands below are upstream's and leave it
+> out. Add `-e HTMLRADAR_API_URL=https://radar.prophecyhosting.com` (Codex: `--env`), or copy
+> the ready-made commands from Settings → API keys on the dashboard. Note that `npx htmlradar-mcp`
+> fetches **upstream's** package, which falls back to htmlradar.com when the URL is missing, and the
+> `/plugin marketplace add htmlradar/htmlradar` route installs upstream's plugin. Neither is ours.
+
 An MCP server that turns the HTML your agent just wrote into a tracked link — and lets the same
 agent ask, a day later, whether anyone read it. Claude Code, Cursor, Codex and any MCP client.
 

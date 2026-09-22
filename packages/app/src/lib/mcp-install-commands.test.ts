@@ -11,49 +11,45 @@ import { mcpInstallCommands } from './mcp-install-commands';
 // is 40 hexadecimal characters, and a realistic fixture has enough entropy that
 // the gitleaks step in CI reports it as a leaked credential. Keep the repeat.
 const KEY = 'hr_live_deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+const URL = 'https://radar.prophecyhosting.com';
 
 const EXPECTED: Record<string, string> = {
-  'claude-code-plugin': `export HTMLRADAR_API_KEY=${KEY}
-# then start Claude Code in that same terminal and run:
-/plugin marketplace add htmlradar/htmlradar
-/plugin install htmlradar@htmlradar`,
-
-  'claude-code-add': `claude mcp add htmlradar -e HTMLRADAR_API_KEY=${KEY} -- npx -y htmlradar-mcp`,
+  'claude-code-add': `claude mcp add htmlradar -e HTMLRADAR_API_URL=${URL} -e HTMLRADAR_API_KEY=${KEY} -- npx -y htmlradar-mcp`,
 
   cursor: `{
   "mcpServers": {
     "htmlradar": {
       "command": "npx",
       "args": ["-y", "htmlradar-mcp"],
-      "env": { "HTMLRADAR_API_KEY": "${KEY}" }
+      "env": {
+        "HTMLRADAR_API_URL": "${URL}",
+        "HTMLRADAR_API_KEY": "${KEY}"
+      }
     }
   }
 }`,
 
-  codex: `codex mcp add htmlradar --env HTMLRADAR_API_KEY=${KEY} -- npx -y htmlradar-mcp`,
+  codex: `codex mcp add htmlradar --env HTMLRADAR_API_URL=${URL} --env HTMLRADAR_API_KEY=${KEY} -- npx -y htmlradar-mcp`,
 
   'claude-desktop': `{
   "mcpServers": {
     "htmlradar": {
       "command": "npx",
       "args": ["-y", "htmlradar-mcp"],
-      "env": { "HTMLRADAR_API_KEY": "${KEY}" }
+      "env": {
+        "HTMLRADAR_API_URL": "${URL}",
+        "HTMLRADAR_API_KEY": "${KEY}"
+      }
     }
   }
 }`,
 };
 
 describe('mcpInstallCommands', () => {
-  const rows = mcpInstallCommands(KEY);
+  const rows = mcpInstallCommands(KEY, URL);
 
-  it('leads with the simplest Claude Code path, then covers the four clients', () => {
-    expect(rows.map((r) => r.id)).toEqual([
-      'claude-code-plugin',
-      'claude-code-add',
-      'cursor',
-      'codex',
-      'claude-desktop',
-    ]);
+  it('covers the four clients, Claude Code first', () => {
+    expect(rows.map((r) => r.id)).toEqual(['claude-code-add', 'cursor', 'codex', 'claude-desktop']);
   });
 
   for (const [id, code] of Object.entries(EXPECTED)) {
@@ -63,9 +59,11 @@ describe('mcpInstallCommands', () => {
     });
   }
 
-  it('puts the real key into every command, never a placeholder', () => {
+  it('puts the real key and this dashboard into every command, never a placeholder', () => {
     for (const row of rows) {
       expect(row.code).toContain(KEY);
+      expect(row.code).toContain(`HTMLRADAR_API_URL`);
+      expect(row.code).toContain(URL);
       expect(row.code).not.toContain('hr_live_…');
       expect(row.code).not.toContain('$HTMLRADAR_API_KEY');
       expect(row.code).not.toContain('${env:HTMLRADAR_API_KEY}');

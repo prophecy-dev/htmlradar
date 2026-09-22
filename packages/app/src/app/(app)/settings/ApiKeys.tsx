@@ -7,11 +7,11 @@
 // produce it again — the database has a SHA-256 hash and nothing else. Hence
 // the copy button and the warning: this is the one moment it exists.
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Check, Copy, KeyRound } from 'lucide-react';
 import { formatTimestamp } from '@/lib/format-timestamp';
-import { mcpInstallCommands } from '@/lib/mcp-install-commands';
+import { aiInstructions, mcpInstallCommands } from '@/lib/mcp-install-commands';
 
 export interface ApiKeyRow {
   id: string;
@@ -62,6 +62,33 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
   );
 }
 
+// For AIs without the MCP server: what to call and how, pointing at this
+// dashboard. No key in it, so it is safe to paste into a prompt or a project's
+// instructions; the AI reads the key from HTMLRADAR_API_KEY.
+function AiInstructions() {
+  const [origin, setOrigin] = useState('');
+  useEffect(() => setOrigin(window.location.origin), []);
+  if (!origin) return null;
+  const text = aiInstructions(origin);
+  return (
+    <div className="mt-8 overflow-hidden rounded-xl border border-line bg-paper">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-2">
+        <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-graphite">
+          Instructions for any AI · prompt or project instructions
+        </span>
+        <CopyButton text={text} label="Copy instructions" />
+      </div>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[12px] leading-[1.55] text-ink">
+        {text}
+      </pre>
+      <p className="border-t border-line px-3.5 py-2 text-[12.5px] leading-relaxed text-graphite">
+        For an AI that can run commands but has no MCP server. It carries no key: set
+        HTMLRADAR_API_KEY in the AI's environment.
+      </p>
+    </div>
+  );
+}
+
 // The commands are assembled in the browser from a key that is already in this
 // tab. Nothing here is sent anywhere, and nothing is written to a log.
 function InstallCommands({ apiKey }: { apiKey: string }) {
@@ -76,7 +103,7 @@ function InstallCommands({ apiKey }: { apiKey: string }) {
         chat, not a ticket, not a shared document.
       </p>
       <div className="mt-4 space-y-3">
-        {mcpInstallCommands(apiKey).map((row) => (
+        {mcpInstallCommands(apiKey, window.location.origin).map((row) => (
           <div key={row.id} className="overflow-hidden rounded-xl border border-line bg-paper">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-2">
               <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-graphite">
@@ -93,10 +120,6 @@ function InstallCommands({ apiKey }: { apiKey: string }) {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[12.5px] leading-relaxed text-graphite">
-        Every command also needs <code className="font-mono">HTMLRADAR_API_URL</code> set to this
-        dashboard’s address (the server has no default).
-      </p>
     </div>
   );
 }
@@ -262,6 +285,7 @@ export function ApiKeys({
           })}
         </ul>
       )}
+      <AiInstructions />
     </section>
   );
 }
