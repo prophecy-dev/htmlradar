@@ -36,12 +36,12 @@
   "send_email": [{ "name": "EMAIL" }],
 
   "vars": {
-    // Host recipient links are printed on. Unconfirmed; docs.hive.land is the
-    // recommendation.
-    "SHARE_HOST": "docs.hive.land",
+    // Host recipient links are printed on. prophecyhosting.com hosts both
+    // Workers until the hive.land domains are ready.
+    "SHARE_HOST": "deck.prophecyhosting.com",
     // The dashboard, linked from first-read alerts. Empty: alerts carry no link.
-    "APP_ORIGIN": "",
-    "MAIL_FROM": "docs@hive.land",
+    "APP_ORIGIN": "https://radar.prophecyhosting.com",
+    "MAIL_FROM": "htmlradar@prophecyhosting.com",
     "BRAND_NAME": "Hivemarket",
     // Who a recipient writes to about their data (address or URL), shown on
     // /privacy. Empty: the page points them at the sender.
