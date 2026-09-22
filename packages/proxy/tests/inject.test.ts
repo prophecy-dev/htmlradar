@@ -416,6 +416,31 @@ describe('fragment / headless document fallback', () => {
   });
 });
 
+describe('the comment box switch', () => {
+  it('is in the injected config only when the caller asks for it', async () => {
+    const withBox = await (
+      await injectTracker(new Response('<html><head></head><body></body></html>'), {
+        share: makeShare({ require_email: true, verify_email: true }),
+        ...BASE,
+        email: 'buyer@acme.test',
+        commentProof: '1790000000.abc123',
+      })
+    ).text();
+    expect(withBox).toContain('"comments":{"enabled":true,"proof":"1790000000.abc123"}');
+
+    // The same verified reader on a load where the proxy did not turn it on
+    // (opted out, owner preview) gets a document with nothing to comment in.
+    const without = await (
+      await injectTracker(new Response('<html><head></head><body></body></html>'), {
+        share: makeShare({ require_email: true, verify_email: true }),
+        ...BASE,
+        email: 'buyer@acme.test',
+      })
+    ).text();
+    expect(without).not.toContain('comments');
+  });
+});
+
 describe('the tracked pill', () => {
   it('replaces the Powered-by badge and links the privacy notice', async () => {
     const html = await inject({ lockDeck: false });

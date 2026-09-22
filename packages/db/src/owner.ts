@@ -839,6 +839,42 @@ export async function listEmailVerifications(
   return results;
 }
 
+export interface CommentRow {
+  id: string;
+  share_id: string;
+  viewer_id: string;
+  section_id: string | null;
+  section_title: string | null;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+  /** The address the reader verified, from the viewer row the comment points at. */
+  viewer_email: string | null;
+}
+
+/**
+ * The comments verified readers left, newest first. Owner-scoped like every
+ * other analytics read: the join to document_shares is what makes a comment
+ * readable by the person it was written to and by nobody else.
+ */
+export async function listComments(db: DB, ownerId: string, scope: Scope): Promise<CommentRow[]> {
+  const s = scopeSql(scope, 2);
+  const { results } = await db
+    .prepare(
+      `SELECT c.id, c.share_id, c.viewer_id, c.section_id, c.section_title, c.body,
+              c.created_at, c.read_at, v.email AS viewer_email
+         FROM document_comments c
+         JOIN document_shares sh ON sh.id = c.share_id
+         JOIN documents d ON d.id = sh.document_id
+         LEFT JOIN viewers v ON v.id = c.viewer_id
+        WHERE sh.owner_id = ?1 AND d.deleted_at IS NULL${s.sql}
+        ORDER BY c.created_at DESC`,
+    )
+    .bind(ownerId, ...s.vals)
+    .all<CommentRow>();
+  return results;
+}
+
 export async function listAttachmentDownloads(
   db: DB,
   ownerId: string,

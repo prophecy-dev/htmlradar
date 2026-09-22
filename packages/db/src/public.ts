@@ -9,7 +9,9 @@
 //
 // Errors a recipient's tracker can act on are thrown as RpcFailure with the
 // same P-codes the Postgres functions raised, so the tracker's messages still
-// line up (see packages/tracker/src/index.ts humanError).
+// line up (see packages/tracker/src/index.ts humanError). Comments are this
+// fork's own addition and take the first free codes after upstream's last
+// one: P0011 comments_not_enabled, P0012 not_verified, P0013 comment_empty.
 
 import { hitRateLimit, nowIso, randomHex, toBool, uuid, type DB } from './d1.js';
 import { rowShare, type ShareRow } from './types.js';
@@ -711,4 +713,198 @@ export async function recordNotification(
     )
     .bind(uuid(), sessionId, kind, channel, to, status, error)
     .run();
+}
+
+// ---------------------------------------------------------------- comments
+
+/** Longer bodies are trimmed to this, not refused: nobody loses their note. */
+const MAX_COMMENT_CHARS = 2000;
+
+export interface AddCommentInput {
+  p_session_id: string;
+  p_token: string;
+  /** The section tracker's id for the heading commented on; null = whole document. */
+  p_section_id: string | null;
+  p_section_title: string | null;
+  p_body: string;
+}
+
+/** What the caller needs to tell the owner that a comment arrived. */
+export interface CommentAlert {
+  commentId: string;
+  sessionId: string;
+  documentId: string;
+  documentTitle: string;
+  ownerEmail: string;
+  ownerName: string | null;
+  telegramChatId: string | null;
+  slug: string;
+  recipientLabel: string | null;
+  /** The address the reader proved. Never empty: an unverified reader cannot get here. */
+  viewerEmail: string;
+  sectionTitle: string | null;
+  body: string;
+}
+
+export interface AddCommentResult {
+  ok: true;
+  comment_id: string;
+  /** The message to send. The caller sends it; storing the comment never waits on it. */
+  alert: CommentAlert;
+}
+
+/**
+ * The link and the address a session is reading under, straight from the
+ * rows, so the worker can check a comment proof against them rather than
+ * against anything the request says (see verifyCommentProof in the proxy).
+ * Null for an unknown session; the caller refuses that exactly as it refuses a
+ * bad proof, so the answer says nothing about which sessions exist.
+ */
+export async function commentSigner(
+  db: DB,
+  sessionId: string,
+): Promise<{ slug: string; email: string } | null> {
+  const id = s(sessionId, 64);
+  if (!id) return null;
+  const r = await db
+    .prepare(
+      `SELECT sh.slug, v.email
+         FROM sessions se
+         JOIN document_shares sh ON sh.id = se.share_id
+         JOIN viewers v ON v.id = se.viewer_id
+        WHERE se.id = ?1`,
+    )
+    .bind(id)
+    .first<{ slug: string; email: string | null }>();
+  const email = (r?.email ?? '').trim().toLowerCase();
+  return r && email ? { slug: r.slug, email } : null;
+}
+
+/**
+ * A verified reader's note to the sender. Authenticated exactly like
+ * updateSession — the session id plus the token that session was handed — so a
+ * comment is written by the browser that is doing the reading and by no other.
+ *
+ * The gate is the feature: a comment is worth reading because whoever left it
+ * proved they hold the address it is signed with. A link that does not ask for
+ * a code shows no comment box at all (the proxy decides that from the same two
+ * facts), and this is the same rule on the writing side, where it cannot be
+ * walked around by posting to the endpoint directly.
+ *
+ * It is the second line, not the first. A session's address is whatever its
+ * start_session body said, so a verification row for that address proves only
+ * that SOMEBODY verified it; the worker has already refused any comment that
+ * does not carry a proof signed from the reader's verified cookie.
+ */
+export async function addComment(db: DB, input: AddCommentInput): Promise<AddCommentResult> {
+  const sessionId = s(input.p_session_id, 64);
+  if (!sessionId) throw new RpcFailure('P0010', 'invalid_token');
+  // Five in ten minutes is a reader going through a deck leaving notes as they
+  // pass; a sixth in the same ten minutes is not reading any more. Keyed on the
+  // session before the token is checked, as updateSession does, so a flood
+  // never reaches the joins below.
+  if (!(await hitRateLimit(db, `comment:${sessionId}`, 5, 600))) {
+    throw new RpcFailure('P0001', 'rate_limited');
+  }
+
+  const r = await db
+    .prepare(
+      `SELECT se.token, se.share_id, se.viewer_id, sh.slug, sh.recipient_label, sh.require_email,
+              sh.verify_email, sh.revoked_at, sh.expires_at, sh.document_id,
+              d.title AS document_title, d.deleted_at,
+              v.email AS viewer_email,
+              p.email AS owner_email, p.display_name, p.telegram_chat_id
+         FROM sessions se
+         JOIN document_shares sh ON sh.id = se.share_id
+         JOIN documents d ON d.id = sh.document_id
+         JOIN viewers v ON v.id = se.viewer_id
+         JOIN profiles p ON p.id = d.owner_id
+        WHERE se.id = ?1`,
+    )
+    .bind(sessionId)
+    .first<Record<string, unknown>>();
+  if (!r || typeof input.p_token !== 'string' || !ctEq(String(r['token'] ?? ''), input.p_token)) {
+    throw new RpcFailure('P0010', 'invalid_token');
+  }
+
+  const shareId = r['share_id'] as string;
+  const expires = r['expires_at'] as string | null;
+  if (r['revoked_at']) throw new RpcFailure('P0003', 'share_revoked');
+  if (expires && Date.parse(expires) < Date.now()) throw new RpcFailure('P0004', 'share_expired');
+  if (r['deleted_at']) throw new RpcFailure('P0008', 'document_deleted');
+  if (!toBool(r['verify_email']) || !toBool(r['require_email'])) {
+    throw new RpcFailure('P0011', 'comments_not_enabled');
+  }
+
+  // Verified on THIS link at THIS address: share_email_verifications is keyed
+  // that way, so a code proved on a sibling link of the same document signs
+  // nothing here.
+  const email = ((r['viewer_email'] as string | null) ?? '').trim().toLowerCase();
+  const verified = email
+    ? await db
+        .prepare(
+          `SELECT 1 AS n FROM share_email_verifications
+            WHERE share_id = ?1 AND lower(email) = ?2 LIMIT 1`,
+        )
+        .bind(shareId, email)
+        .first<{ n: number }>()
+    : null;
+  if (!verified) throw new RpcFailure('P0012', 'not_verified');
+
+  // Trimmed twice: once for what the reader typed, once for what the ceiling
+  // cut in half a word.
+  const body = (typeof input.p_body === 'string' ? input.p_body : '')
+    .trim()
+    .slice(0, MAX_COMMENT_CHARS)
+    .trim();
+  if (!body) throw new RpcFailure('P0013', 'comment_empty');
+
+  // The second ceiling, per link: a hundred comments an hour on one link is a
+  // script, whichever session each one claims to come from. Counted only here,
+  // once every other check has passed, so that nothing refused spends it — a
+  // reader on a plain link, or a revoked one, posting over and over must not
+  // be able to silence the verified readers of the link (review, medium).
+  if (!(await hitRateLimit(db, `comment-share:${shareId}`, 100, 3600))) {
+    throw new RpcFailure('P0001', 'rate_limited');
+  }
+
+  const commentId = uuid();
+  const sectionTitle = s(input.p_section_title, 512);
+  await db
+    .prepare(
+      `INSERT INTO document_comments
+         (id, document_id, share_id, viewer_id, session_id, section_id, section_title, body, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    )
+    .bind(
+      commentId,
+      r['document_id'],
+      shareId,
+      r['viewer_id'],
+      sessionId,
+      s(input.p_section_id, 256),
+      sectionTitle,
+      body,
+      nowIso(),
+    )
+    .run();
+
+  return {
+    ok: true,
+    comment_id: commentId,
+    alert: {
+      commentId,
+      sessionId,
+      documentId: r['document_id'] as string,
+      documentTitle: r['document_title'] as string,
+      ownerEmail: r['owner_email'] as string,
+      ownerName: (r['display_name'] as string | null) ?? null,
+      telegramChatId: (r['telegram_chat_id'] as string | null) ?? null,
+      slug: r['slug'] as string,
+      recipientLabel: (r['recipient_label'] as string | null) ?? null,
+      viewerEmail: email,
+      sectionTitle,
+      body,
+    },
+  };
 }

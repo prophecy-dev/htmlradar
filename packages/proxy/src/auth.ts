@@ -719,6 +719,67 @@ export async function verifyVerifiedCookie(
 }
 
 // ---------------------------------------------------------------------------
+// THE COMMENT PROOF, AND WHY A COMMENT CANNOT TRUST ITS SESSION'S ADDRESS.
+//
+// A session's address comes from the /t/start_session body, which anybody can
+// write. Checking only that the address had verified on the link (review,
+// 23 September 2026, high) let whoever held a forwarded link start a session
+// as the boss who verified yesterday and comment in the boss's name — and the
+// difference between a stored comment and a refusal told them who had.
+//
+// So the right to comment is minted where the verified cookie is actually
+// read: when the proxy serves the deck to a reader holding one, it signs the
+// link and that cookie's address into the page, and /t/comment is refused
+// unless the proof matches the link and the address of the session it is
+// posted on. The session supplies both; the request supplies neither.
+//
+// It never outlives the cookie it stands for, and is capped below that, so a
+// proof copied out of a page stops working the same day.
+const COMMENT_PROOF_TTL_SECONDS = 12 * 60 * 60;
+
+export async function issueCommentProof(
+  slug: string,
+  email: string,
+  cookieExpiresAt: number,
+  secret: string,
+): Promise<string> {
+  const expiresAt = Math.min(
+    cookieExpiresAt,
+    Math.floor(Date.now() / 1000) + COMMENT_PROOF_TTL_SECONDS,
+  );
+  const mac = await signPurposeHex(
+    'comment-proof',
+    [slug, email.toLowerCase(), String(expiresAt)],
+    secret,
+  );
+  return `${expiresAt}.${mac}`;
+}
+
+export async function verifyCommentProof(
+  proof: string | null,
+  slug: string,
+  email: string,
+  secret: string,
+): Promise<boolean> {
+  if (!proof) return false;
+  const parts = proof.split('.');
+  if (parts.length !== 2) return false;
+  const [expiryStr, mac] = parts as [string, string];
+  // Digits only, so the expiry that is signed is exactly the one that was sent:
+  // parseInt would read "123abc" as 123 and check a MAC over a string nobody
+  // signed — harmless, but there is no reason to accept it.
+  if (!/^\d{1,12}$/.test(expiryStr)) return false;
+  const expiresAt = Number.parseInt(expiryStr, 10);
+  if (expiresAt < Math.floor(Date.now() / 1000)) return false;
+  const expected = await signPurposeHex(
+    'comment-proof',
+    [slug, email.toLowerCase(), String(expiresAt)],
+    secret,
+  );
+  return constantTimeEqual(mac, expected);
+}
+
+// ---------------------------------------------------------------------------
 // THE SIGNED FORM TOKEN, AND WHY THE CHALLENGE COOKIE ALONE WAS NOT ENOUGH
 // (Astra, finding 2).
 //
@@ -903,7 +964,7 @@ function parseCookies(header: string): Record<string, string> {
 // and each one carries a comment saying why its own ambiguity is not reachable,
 // with a test in tests/message-ambiguity.test.ts pinning the character rule it
 // leans on.
-type Purpose = 'verified-email-cookie' | 'verify-form-token' | 'verify-code-hash';
+type Purpose = 'verified-email-cookie' | 'verify-form-token' | 'verify-code-hash' | 'comment-proof';
 
 function purposeMessage(purpose: Purpose, fields: string[]): string {
   return JSON.stringify([purpose, ...fields]);

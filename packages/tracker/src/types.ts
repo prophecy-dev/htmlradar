@@ -57,6 +57,16 @@ export interface TrackerConfig {
     };
   };
 
+  // The reader's comment box. Off unless the proxy turns it on, which it does
+  // only on a link that asks for a verified address and only once this reader
+  // has proved theirs. Nothing is ever read back: a comment goes to the sender
+  // and the reader never sees it, or anyone else's, again.
+  comments: {
+    enabled: boolean;
+    /** Signed by the proxy from the reader's verified cookie; sent back with each comment. */
+    proof?: string;
+  };
+
   privacy: {
     mode: 'anonymous' | 'email-gated';
   };

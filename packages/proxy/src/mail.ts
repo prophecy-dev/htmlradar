@@ -1,6 +1,7 @@
-// Outgoing messages: the verified gate's code, and the first-read alert to the
-// sender (e-mail, plus Telegram when the sender has a chat id and the bot token
-// is set). E-mail goes through the Cloudflare Email Service binding `EMAIL`.
+// Outgoing messages: the verified gate's code, and the two alerts to the
+// sender — the first read, and a comment a verified reader left (e-mail, plus
+// Telegram when the sender has a chat id and the bot token is set). E-mail
+// goes through the Cloudflare Email Service binding `EMAIL`.
 //
 // THE CODE MESSAGE CARRIES NO LINK THAT OPENS THE DOCUMENT. Corporate mail
 // scanners open every link in a message before the human does; a six-digit
@@ -8,7 +9,7 @@
 // No tracking pixel and no marketing in anything sent to a recipient.
 
 import type { Env } from './env.js';
-import type { FirstReadAlert } from './store.js';
+import type { CommentAlert, FirstReadAlert } from './store.js';
 import { recordNotification } from './store.js';
 import { escapeHtml } from './escape.js';
 
@@ -93,12 +94,14 @@ export function readerLine(a: FirstReadAlert): string {
   return extra ? `${who} (${extra})` : who;
 }
 
+/** Where the sender goes to see the whole picture. Null when no dashboard is configured. */
+const dashboardLink = (env: Env, documentId: string): string | null =>
+  env.APP_ORIGIN ? `${env.APP_ORIGIN.replace(/\/+$/, '')}/docs/${documentId}` : null;
+
 export function firstReadMessage(env: Env, a: FirstReadAlert): Outgoing & { telegram: string } {
   const who = readerLine(a);
   const label = a.recipientLabel && a.viewerEmail ? ` — link for ${a.recipientLabel}` : '';
-  const dashboard = env.APP_ORIGIN
-    ? `${env.APP_ORIGIN.replace(/\/+$/, '')}/docs/${a.documentId}`
-    : null;
+  const dashboard = dashboardLink(env, a.documentId);
   const subject = `${a.viewerEmail ?? a.recipientLabel ?? 'Someone'} is reading ${a.documentTitle}`;
   const text = [
     `${who} started reading "${a.documentTitle}"${label}.`,
@@ -137,11 +140,22 @@ export async function sendTelegram(env: Env, chatId: string, text: string): Prom
 }
 
 /**
- * Sends the first-read alert on every configured channel and logs each attempt
- * to notifications_log. Runs inside ctx.waitUntil; never throws.
+ * Sends one alert to the sender on every configured channel and logs each
+ * attempt to notifications_log under `kind`. Runs inside ctx.waitUntil; never
+ * throws. E-mail is attempted even while Email Sending is off on the account —
+ * the binding is absent, the send is logged 'failed' with the reason, and
+ * Telegram is what actually reaches the sender today.
  */
-export async function sendFirstReadAlert(env: Env, alert: FirstReadAlert): Promise<void> {
-  const msg = firstReadMessage(env, alert);
+async function sendOwnerAlert(
+  env: Env,
+  alert: {
+    sessionId: string;
+    ownerEmail: string;
+    telegramChatId: string | null;
+  },
+  kind: 'first_read' | 'comment',
+  msg: Outgoing & { telegram: string },
+): Promise<void> {
   const jobs: Promise<void>[] = [
     (async () => {
       const ok = await sendMail(env, msg);
@@ -152,6 +166,7 @@ export async function sendFirstReadAlert(env: Env, alert: FirstReadAlert): Promi
         alert.ownerEmail,
         ok ? 'delivered' : 'failed',
         ok ? null : env.EMAIL ? 'send refused' : 'no EMAIL binding',
+        kind,
       );
     })(),
   ];
@@ -167,15 +182,63 @@ export async function sendFirstReadAlert(env: Env, alert: FirstReadAlert): Promi
           chatId,
           ok ? 'delivered' : 'failed',
           ok ? null : 'telegram refused',
+          kind,
         );
       })(),
     );
   }
   const results = await Promise.allSettled(jobs);
   for (const r of results) {
-    if (r.status === 'rejected') console.error('first-read alert log failed', r.reason);
+    if (r.status === 'rejected') console.error(`${kind} alert log failed`, r.reason);
   }
 }
+
+export const sendFirstReadAlert = (env: Env, alert: FirstReadAlert): Promise<void> =>
+  sendOwnerAlert(env, alert, 'first_read', firstReadMessage(env, alert));
+
+// ---------------------------------------------------------------- a comment
+
+/** Enough of a note to answer from the phone; the rest is one click away. */
+const COMMENT_PREVIEW_CHARS = 400;
+
+const truncate = (s: string, max: number): string =>
+  s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
+
+export function commentMessage(env: Env, c: CommentAlert): Outgoing & { telegram: string } {
+  // The section is what makes a comment actionable — "the pricing slide" is a
+  // different message from "the deck" — so it leads wherever there is one.
+  const about = c.sectionTitle ? `on ${c.sectionTitle}` : 'on the whole document';
+  const dashboard = dashboardLink(env, c.documentId);
+  const body = truncate(c.body, COMMENT_PREVIEW_CHARS);
+  const subject = `${c.viewerEmail} commented on ${c.documentTitle}`;
+  const text = [
+    `${c.viewerEmail} left a comment ${about} in "${c.documentTitle}".`,
+    '',
+    body,
+    '',
+    dashboard ? `Every comment on this document: ${dashboard}` : '',
+  ]
+    .join('\n')
+    .trim();
+  const html = layout(
+    subject,
+    `<p style="${P}"><strong>${escapeHtml(c.viewerEmail)}</strong> left a comment ${escapeHtml(about)} in &ldquo;${escapeHtml(c.documentTitle)}&rdquo;.</p>
+     <blockquote style="margin:0 0 16px;padding:12px 16px;border-left:3px solid #E8D5BD;font-size:15px;line-height:1.55;color:#3A2818;white-space:pre-wrap;">${escapeHtml(body)}</blockquote>
+     ${dashboard ? `<p style="${P}"><a href="${escapeHtml(dashboard)}" style="color:#7A1F2E;">Every comment on this document &rarr;</a></p>` : ''}
+     <p style="${MUTED}">Only readers who confirmed this address with a code can comment.</p>`,
+  );
+  const telegram = [
+    `💬 ${c.viewerEmail} commented ${about} in "${c.documentTitle}":`,
+    body,
+    dashboard ?? '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return { to: c.ownerEmail, subject, text, html, telegram };
+}
+
+export const sendCommentAlert = (env: Env, alert: CommentAlert): Promise<void> =>
+  sendOwnerAlert(env, alert, 'comment', commentMessage(env, alert));
 
 // ---------------------------------------------------------------- layout
 

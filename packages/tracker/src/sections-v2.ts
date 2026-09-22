@@ -71,6 +71,13 @@ interface Section {
   hasReadFired: boolean;
 }
 
+/** A section and the element that names it, for the comment UI to hang off. */
+export interface SectionAnchor {
+  id: string;
+  title: string;
+  element: HTMLElement;
+}
+
 interface Options {
   selector: string;
   boundaryOffsetPx: number; // unused in v2 (kept for type-compatibility)
@@ -158,6 +165,14 @@ export class SectionTracker {
         ordinal: s.ordinal,
         timeSeconds: s.qualifiedMs / 1000,
       }));
+  }
+
+  // The element that opens each section, with the id and title this tracker
+  // gave it. The comment UI hangs off these, so a comment's section_id is the
+  // same string as the section_events row for the same reading and the sender
+  // sees the note beside the time spent on the same heading.
+  anchors(): SectionAnchor[] {
+    return this.sections.map((s) => ({ id: s.id, title: s.title, element: s.members[0]! }));
   }
 
   // ---------------------------------------------------------------------------
@@ -415,8 +430,11 @@ function rangeMembers(heading: HTMLElement, stop: HTMLElement | null): HTMLEleme
     if (!next || next === stop) break;
 
     // Fixed and sticky elements sit in the viewport whatever is scrolled, so
-    // their box says nothing about where the reader is.
-    if (!isPinned(next)) members.push(next);
+    // their box says nothing about where the reader is. Neither does anything
+    // the tracker itself put in the page: a comment box taken into a range
+    // would grow that range by its own height and, worse, grow it again the
+    // moment the reader opened it.
+    if (!isPinned(next) && !isTrackerUi(next)) members.push(next);
     node = next;
   }
   return members;
@@ -429,6 +447,15 @@ function isScroller(el: HTMLElement): boolean {
   } catch {
     return false;
   }
+}
+
+// The marker every node the tracker adds to someone else's document carries
+// (see comments.ts). Nothing wearing it is part of the document being read, so
+// nothing wearing it is a section or belongs to one.
+export const TRACKER_UI_ATTR = 'data-htmlradar-ui';
+
+function isTrackerUi(el: HTMLElement): boolean {
+  return el.hasAttribute(TRACKER_UI_ATTR);
 }
 
 function isPinned(el: HTMLElement): boolean {
@@ -474,7 +501,10 @@ function depthFromTag(tag: string): number {
 type Strategy = 'configured' | 'headings' | 'slides' | 'prose';
 
 function pickCandidates(configured: string): { elements: HTMLElement[]; strategy: Strategy } {
+  // Also true for the tracker's own UI, which every strategy below must skip:
+  // a comment box is a `div` the slide strategy would happily call a section.
   const isAnchored = (el: HTMLElement): boolean => {
+    if (isTrackerUi(el)) return true;
     try {
       const p = getComputedStyle(el).position;
       return p === 'fixed' || p === 'sticky';

@@ -11,6 +11,7 @@ import { ChevronRight, FileText, Link2 } from 'lucide-react';
 import {
   getDocument,
   listAttachments,
+  listComments,
   listEmailVerifications,
   listSectionEvents,
   listSessions,
@@ -46,7 +47,7 @@ import { DocTabsClient } from './DocTabsClient';
 import { normalizeTab, type TabKey } from './tab-key';
 import { type ShareRow, type ShareAnalyticsData } from '../share-types';
 import { LinkPreviewForm } from '../LinkPreviewForm';
-import type { Viewer, Session, SectionEvent } from '@/lib/types';
+import type { Viewer, Session, SectionEvent, ReaderComment } from '@/lib/types';
 import { isMetaSectionTitle } from '@/lib/section-filter';
 import { countDistinctViewers } from '@/lib/viewer-metrics';
 
@@ -93,16 +94,25 @@ async function renderV2({
   await touchDocumentViewed(d, user.id, doc.id);
 
   const scope = { documentId: doc.id };
-  const [rawShares, versionRows, attachmentRows, allViewers, allSessions, rawEvents, verified] =
-    await Promise.all([
-      listSharesForDocument(d, user.id, doc.id),
-      listVersions(d, user.id, doc.id),
-      listAttachments(d, user.id, doc.id),
-      listViewers(d, user.id, scope),
-      listSessions(d, user.id, scope),
-      listSectionEvents(d, user.id, scope),
-      listEmailVerifications(d, user.id, scope),
-    ]);
+  const [
+    rawShares,
+    versionRows,
+    attachmentRows,
+    allViewers,
+    allSessions,
+    rawEvents,
+    verified,
+    comments,
+  ] = await Promise.all([
+    listSharesForDocument(d, user.id, doc.id),
+    listVersions(d, user.id, doc.id),
+    listAttachments(d, user.id, doc.id),
+    listViewers(d, user.id, scope),
+    listSessions(d, user.id, scope),
+    listSectionEvents(d, user.id, scope),
+    listEmailVerifications(d, user.id, scope),
+    listComments(d, user.id, scope),
+  ]);
   const shareIds = rawShares.map((s) => s.id);
   const versions: DocumentVersionRow[] = versionRows as DocumentVersionRow[];
   const attachments: AttachmentRow[] = attachmentRows.map((a) => ({
@@ -405,6 +415,7 @@ async function renderV2({
         verifiedViewerIds={verifiedViewerIds}
         sessions={allSessions}
         events={allEvents}
+        comments={comments as ReaderComment[]}
         shareSlugs={shareSlugs}
         shareLabels={shareLabels}
         toggleViewerInternalAction={toggleViewerInternalAction}

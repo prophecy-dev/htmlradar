@@ -59,6 +59,10 @@ const DEFAULTS: Omit<TrackerConfig, 'endpoint' | 'shareSlug'> = {
       privacyNote: 'Your email goes to the sender only. Not used for marketing.',
     },
   },
+  // Off by default, everywhere. A host page that sets it on its own gets a box
+  // whose posts the worker refuses, which is the right way round: the rule
+  // about who may comment lives in addComment, not in this file.
+  comments: { enabled: false },
   privacy: { mode: 'email-gated' },
   hooks: {},
   debug: false,
@@ -88,6 +92,7 @@ export function resolveConfig(scriptEl: HTMLScriptElement | null): TrackerConfig
       brand: { ...DEFAULTS.gate.brand, ...(fromRuntime.gate?.brand ?? {}) },
       copy: { ...DEFAULTS.gate.copy, ...(fromRuntime.gate?.copy ?? {}) },
     },
+    comments: { ...DEFAULTS.comments, ...(fromRuntime.comments ?? {}) },
     privacy: { ...DEFAULTS.privacy, ...(fromRuntime.privacy ?? {}) },
     hooks: fromRuntime.hooks ?? {},
     debug: fromRuntime.debug ?? false,

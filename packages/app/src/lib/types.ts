@@ -31,6 +31,23 @@ export interface Session {
   bounced: boolean;
 }
 
+/**
+ * A note a verified reader left for the owner. Private to them: it is read
+ * here and nowhere on the recipient side, so nobody but the owner ever sees
+ * one (see packages/db/migrations/0003_comments.sql).
+ */
+export interface ReaderComment {
+  id: string;
+  share_id: string;
+  viewer_id: string;
+  section_id: string | null;
+  section_title: string | null;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+  viewer_email: string | null;
+}
+
 export interface SectionEvent {
   id?: string;
   session_id: string;

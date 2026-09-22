@@ -12,6 +12,13 @@ interface InjectOptions {
   /** The share's unfurl card; replaces any og:/twitter: tags the document carries. */
   og?: OgCard;
   email?: string;
+  // Turns on the reader's comment UI, and is what the tracker sends back with
+  // each comment: a proof signed from this reader's verified cookie (see
+  // issueCommentProof in auth.ts). Set only for a link that asks for a verified
+  // address once this reader has proved theirs — the decision is the proxy's
+  // (see handleRequest), never the page's, and a document that switched its
+  // own box on would have nothing /t/comment accepts.
+  commentProof?: string;
   // The returning-reader identifier, derived from the `hr_rid` cookie and this
   // document (see deriveReaderId in auth.ts). Handed to the tracker through the
   // same runtime config that already carries the verified email and the geo,
@@ -138,6 +145,7 @@ function headInjection(opts: InjectOptions): string {
     privacy: { mode: privacyMode },
     gate: { enabled: opts.share.require_email && !opts.email },
   };
+  if (opts.commentProof) config['comments'] = { enabled: true, proof: opts.commentProof };
   if (opts.email) config['email'] = opts.email;
   if (opts.readerId) config['readerId'] = opts.readerId;
   if (opts.geo) config['geo'] = opts.geo;

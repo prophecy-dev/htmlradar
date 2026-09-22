@@ -15,6 +15,7 @@ export type Share = db.PublicShare;
 export type Document = db.PublicDocument;
 export type Attachment = db.Attachment;
 export type FirstReadAlert = db.FirstReadAlert;
+export type CommentAlert = db.CommentAlert;
 export { RpcFailure } from '@htmlradar/db/public';
 
 async function guard<T>(p: Promise<T>): Promise<T> {
@@ -82,6 +83,14 @@ export const updateSession = (
   env: Env,
   input: db.UpdateSessionInput,
 ): Promise<db.UpdateSessionResult> => guard(db.updateSession(env.DB, input));
+
+export const addComment = (env: Env, input: db.AddCommentInput): Promise<db.AddCommentResult> =>
+  guard(db.addComment(env.DB, input));
+
+export const commentSigner = (
+  env: Env,
+  sessionId: string,
+): Promise<{ slug: string; email: string } | null> => guard(db.commentSigner(env.DB, sessionId));
 
 export const recordNotification = (
   env: Env,

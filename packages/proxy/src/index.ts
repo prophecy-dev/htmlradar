@@ -10,6 +10,7 @@
 //   GET  /r/_doc/{doc_id}      sender-side raw-doc preview (HMAC-gated)
 //   POST /t/start_session      the tracker's session start (CORS, text/plain JSON)
 //   POST /t/update_session     the tracker's heartbeat; fires the first-read alert
+//   POST /t/comment            a verified reader's note to the sender
 //   GET  /v1/tracker.js        the tracker, bundled into this worker
 //   GET  /v1/tracker.{v}.js    the same tracker at its content-derived address
 //   GET  /privacy              what a link records, for recipients
@@ -41,6 +42,8 @@ import {
   checkVerificationCode,
   startSession,
   updateSession,
+  addComment,
+  commentSigner,
   RpcFailure,
   UpstreamError,
   type Attachment,
@@ -70,6 +73,8 @@ import {
   issueGateToken,
   verifyGateToken,
   issueVerifiedCookie,
+  issueCommentProof,
+  verifyCommentProof,
   newVerificationCode,
   newVerifyChallenge,
   readVerifyChallenge,
@@ -98,7 +103,7 @@ import {
   verifyCodeForm,
   withCard,
 } from './responses.js';
-import { brandOf, sendFirstReadAlert, sendVerificationCode } from './mail.js';
+import { brandOf, sendCommentAlert, sendFirstReadAlert, sendVerificationCode } from './mail.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -184,8 +189,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return privacyPage({ brand: brandOf(env), contact: env.PRIVACY_CONTACT || null });
   }
 
-  // The tracker's two calls.
-  const tMatch = /^\/t\/(start_session|update_session)$/.exec(url.pathname);
+  // The tracker's calls.
+  const tMatch = /^\/t\/(start_session|update_session|comment)$/.exec(url.pathname);
   if (tMatch) return handleTrackerCall(tMatch[1] as TrackerCall, request, env, ctx);
 
   const trackerMatch = TRACKER_PATH_RE.exec(url.pathname);
@@ -333,6 +338,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // One branch, so the attachment route (which repeats this pair) and the
   // document cannot disagree.
   let verifiedEmail: string | undefined;
+  // When the address came from the VERIFIED cookie (not the plain e-mail one),
+  // that cookie's expiry — the comment proof below must not outlive it.
+  let verifiedCookieExpiresAt: number | undefined;
   if (share.require_email && !isOwnerPreview) {
     const cookie = share.verify_email
       ? await verifyVerifiedCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET)
@@ -355,6 +363,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       );
     }
     verifiedEmail = cookie.email;
+    if (share.verify_email) verifiedCookieExpiresAt = cookie.expiresAt;
   }
 
   const doc = await getDocument(env, share.document_id);
@@ -374,6 +383,24 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // tracker, and therefore no session. The owner's preview is not a read.
   const optedOut = isTrackingOptedOut(request.headers.get('cookie'));
   const trackingEnabled = !isOwnerPreview && !optedOut;
+
+  // The comment box exists only where a comment can be signed: a link that
+  // asks for a verified address, read by somebody who proved theirs on this
+  // very load. Every other reader — an ordinary e-mail gate, no gate at all,
+  // the owner's own preview — is served a document with no box in it, because
+  // an unsigned note is worth less to the sender than no note.
+  //
+  // Tracking off means no session, and a comment is written against a session,
+  // so an opted-out reader has no box either. That is the honest order: a
+  // reader who asked not to be recorded is not offered a way to be recorded.
+  //
+  // What turns the box on is a proof signed here, from the verified cookie
+  // this request carried — not a flag. /t/comment accepts nothing else, since
+  // the address on a session is only what its start_session body claimed.
+  const commentProof =
+    trackingEnabled && share.verify_email && verifiedEmail && verifiedCookieExpiresAt
+      ? await issueCommentProof(slug, verifiedEmail, verifiedCookieExpiresAt, env.SESSION_SECRET)
+      : undefined;
 
   // The returning reader: `hr_rid` carries a random value on this host; the
   // tracker is handed that value bound to this document (deriveReaderId), so
@@ -395,6 +422,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     trackerUrl: trackerSrc(env),
     endpoint: url.origin,
     og: card,
+    ...(commentProof ? { commentProof } : {}),
     ...(verifiedEmail ? { email: verifiedEmail } : {}),
     ...(readerId ? { readerId } : {}),
     ...(setCookies.length > 0 ? { setCookies } : {}),
@@ -405,7 +433,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
 // ---------------------------------------------------------------- tracker calls
 
-type TrackerCall = 'start_session' | 'update_session';
+type TrackerCall = 'start_session' | 'update_session' | 'comment';
 
 // The served document runs in an opaque origin, so every tracker call is
 // cross-origin. The tracker sends text/plain without credentials (a simple
@@ -445,10 +473,11 @@ async function handleTrackerCall(
     return tJson({ code: 'http_400', message: 'bad_request' }, 400);
   }
 
+  const str = (k: string): string | null =>
+    typeof body[k] === 'string' ? (body[k] as string) : null;
+
   try {
     if (call === 'start_session') {
-      const str = (k: string): string | null =>
-        typeof body[k] === 'string' ? (body[k] as string) : null;
       // Location and device come from the request itself, not the page:
       // the network knows the country, and the page is somebody else's HTML.
       const geo = geoFromRequest(request) ?? {};
@@ -465,6 +494,31 @@ async function handleTrackerCall(
         p_browser: geo.browser ?? str('p_browser'),
       });
       return tJson(result);
+    }
+    if (call === 'comment') {
+      // The proof first, against the link and address the SESSION holds. One
+      // refusal for every way of failing — no proof, a forged or expired one,
+      // one for another link or address, a session that does not exist — so
+      // the answer cannot be used to learn who has verified on a link.
+      const sessionId = str('p_session_id') ?? '';
+      const signer = await commentSigner(env, sessionId);
+      if (
+        !signer ||
+        !(await verifyCommentProof(str('p_proof'), signer.slug, signer.email, env.SESSION_SECRET))
+      ) {
+        throw new RpcFailure('P0012', 'not_verified');
+      }
+      const comment = await addComment(env, {
+        p_session_id: sessionId,
+        p_token: str('p_token') ?? '',
+        p_section_id: str('p_section_id'),
+        p_section_title: str('p_section_title'),
+        p_body: str('p_body') ?? '',
+      });
+      // After the reply, like the first-read alert: the comment is stored
+      // either way, and the reader must not wait on Telegram to see "sent".
+      ctx.waitUntil(sendCommentAlert(env, comment.alert));
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
     const result = await updateSession(env, {
       p_session_id: typeof body['p_session_id'] === 'string' ? body['p_session_id'] : '',

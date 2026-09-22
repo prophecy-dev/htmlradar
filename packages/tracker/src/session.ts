@@ -2,7 +2,7 @@ import type { FlushPayload, SectionInfo, SessionInfo, TrackerConfig } from './ty
 // v2: viewport-coverage-weighted accumulation.
 // One-line rollback: change this import to `./sections-legacy.js`. The
 // legacy file ships in the bundle until 2026-05-24 once v2 is stable.
-import { SectionTracker } from './sections-v2.js';
+import { SectionTracker, type SectionAnchor } from './sections-v2.js';
 import { createTransport, RpcError, type StartSessionResult } from './transport.js';
 
 interface SessionOptions {
@@ -155,6 +155,18 @@ export class Session {
       this.opts.config.hooks.onSessionStart(this.info);
     }
     return this.info;
+  }
+
+  // What a comment is signed with: the same session and token every heartbeat
+  // carries. Null until start_session has returned, which is why the comment
+  // UI is mounted off `ready` and not at boot.
+  credentials(): { sessionId: string; token: string } | null {
+    return this.info && this.token ? { sessionId: this.info.sessionId, token: this.token } : null;
+  }
+
+  /** The sections this session is measuring, for the comment UI to hang off. */
+  sectionAnchors(): SectionAnchor[] {
+    return this.sections.anchors();
   }
 
   async flush(keepalive = false): Promise<void> {
