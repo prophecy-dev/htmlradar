@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fakeD1, type FakeD1 } from '../../db/tests/d1-fake.js';
 import { DOC, OWNER, seedOwnerAndDoc, seedShare } from '../../db/tests/seed.js';
+import { issueCommentProof, issueEmailCookie, issueVerifiedCookie } from '../src/auth.js';
 import { TRACKER_JS, TRACKER_VERSION } from '../src/tracker-bundle.js';
 
 // The worker end to end on the real store, over a node:sqlite D1 that has had
@@ -67,6 +68,34 @@ const post = (path: string, body: unknown, headers: Record<string, string> = {},
   );
 
 const SLACKBOT = 'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)';
+
+// HTMLRewriter is a Workers global with no Node equivalent. The comment tests
+// need only what the proxy injects into <head> and <body> (the tracker config
+// carrying the comment proof), so this keeps exactly that and drops the rest,
+// as reader-identity.test.ts does.
+type Sink = { append(content: string, opts: { html: true }): void };
+class FakeHTMLRewriter {
+  private handlers: Record<string, { element(el: Sink): void }> = {};
+  private appended: string[] = [];
+  on(selector: string, handler: { element(el: Sink): void }): this {
+    this.handlers[selector] = handler;
+    return this;
+  }
+  onDocument(): this {
+    return this;
+  }
+  transform(res: Response): Response {
+    const sink: Sink = { append: (html) => void this.appended.push(html) };
+    this.handlers['head']?.element(sink);
+    this.handlers['body']?.element(sink);
+    return new Response(`<html>${this.appended.join('')}</html>`, {
+      status: res.status,
+      headers: res.headers,
+    });
+  }
+}
+(globalThis as unknown as { HTMLRewriter: typeof FakeHTMLRewriter }).HTMLRewriter =
+  FakeHTMLRewriter;
 
 beforeEach(() => {
   db = fakeD1();
@@ -180,18 +209,45 @@ describe('the tracker endpoints', () => {
 });
 
 describe('the comment endpoint', () => {
+  const SECRET = 'test-session-secret';
+  const BUYER = 'buyer@acme.test';
+
   // The reader has already been through the gate by the time the tracker can
   // post: the verification row is what that step leaves behind, and the
   // session is what the tracker holds.
-  async function verifiedSession(e: Env): Promise<{ session_id: string; token: string }> {
-    seedShare(db, { slug: 'rfp', require_email: true, verify_email: true });
+  async function verifiedSession(
+    e: Env,
+    slug = 'rfp',
+    email = BUYER,
+  ): Promise<{ session_id: string; token: string }> {
+    seedShare(db, { slug, require_email: true, verify_email: true });
     db.rows(
-      `INSERT INTO share_email_verifications (share_id, email) VALUES ('share-rfp', 'buyer@acme.test')`,
+      `INSERT INTO share_email_verifications (share_id, email) VALUES (?, ?)`,
+      `share-${slug}`,
+      email,
     );
     return (await (
-      await post('/t/start_session', { p_share_slug: 'rfp', p_email: 'buyer@acme.test' }, {}, e)
+      await post('/t/start_session', { p_share_slug: slug, p_email: email }, {}, e)
     ).json()) as { session_id: string; token: string };
   }
+
+  /** The proof the proxy signs into a deck served to a reader holding a verified cookie. */
+  async function proofFromTheDeck(slug: string, email: string, e: Env): Promise<string> {
+    objects[DOC.r2_key] = { body: '<html><head></head><body><h2>Pricing</h2></body></html>' };
+    const html = await (
+      await call(
+        `/r/${slug}`,
+        { headers: { Cookie: (await issueVerifiedCookie(slug, email, SECRET)).split(';')[0]! } },
+        e,
+      )
+    ).text();
+    const proof = /"comments":\{"enabled":true,"proof":"([^"]+)"\}/.exec(html)?.[1];
+    if (!proof) throw new Error('no comment proof in the served deck');
+    return proof;
+  }
+
+  const refusal = async (res: Response) => ({ status: res.status, body: await res.json() });
+  const NOT_VERIFIED = { status: 400, body: { code: 'P0012', message: 'not_verified' } };
 
   it('stores the comment and tells the sender, after the reply', async () => {
     const fetchSpy = vi
@@ -199,12 +255,14 @@ describe('the comment endpoint', () => {
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
     const e = env({ TELEGRAM_BOT_TOKEN: 'bot-token', APP_ORIGIN: 'https://radar.example' });
     const s = await verifiedSession(e);
+    const proof = await proofFromTheDeck('rfp', BUYER, e);
 
     const res = await post(
       '/t/comment',
       {
         p_session_id: s.session_id,
         p_token: s.token,
+        p_proof: proof,
         p_section_id: 'pricing',
         p_section_title: 'Pricing',
         p_body: '  Can you break out the year-two number?  ',
@@ -237,33 +295,119 @@ describe('the comment endpoint', () => {
     );
   });
 
-  it('refuses a reader who never proved their address, and tells nobody', async () => {
-    seedShare(db, { slug: 'open-rfp', require_email: true, verify_email: true });
-    const s = (await (
-      await post('/t/start_session', { p_share_slug: 'open-rfp', p_email: 'walkin@acme.test' })
-    ).json()) as { session_id: string; token: string };
+  // The impersonation the proof exists for: the boss verified on this link
+  // yesterday, and whoever the link was forwarded to starts a session simply
+  // CLAIMING the boss's address. The session and its verification row are both
+  // genuine; only the cookie is missing, and without it there is no proof.
+  it('refuses a session that claims a verified address but carries no proof of it', async () => {
+    const e = env();
+    const forged = await verifiedSession(e);
     const res = await post('/t/comment', {
-      p_session_id: s.session_id,
-      p_token: s.token,
-      p_body: 'Hello?',
+      p_session_id: forged.session_id,
+      p_token: forged.token,
+      p_body: 'Approved — go ahead.',
     });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ code: 'P0012' });
+    expect(await refusal(res)).toEqual(NOT_VERIFIED);
     expect(db.rows(`SELECT count(*) AS n FROM document_comments`)).toEqual([{ n: 0 }]);
     expect(SENT).toEqual([]);
   });
 
-  it('refuses a comment carrying the wrong token', async () => {
+  it('refuses a proof minted for somebody else, even on the same link', async () => {
+    const e = env();
+    const forged = await verifiedSession(e);
+    // The forwardee verifies their OWN address and so gets a real proof —
+    // for their address, which is not the one on the session they post from.
+    db.rows(
+      `INSERT INTO share_email_verifications (share_id, email) VALUES ('share-rfp', 'fwd@else.test')`,
+    );
+    const theirs = await proofFromTheDeck('rfp', 'fwd@else.test', e);
+    const res = await post('/t/comment', {
+      p_session_id: forged.session_id,
+      p_token: forged.token,
+      p_proof: theirs,
+      p_body: 'Approved — go ahead.',
+    });
+    expect(await refusal(res)).toEqual(NOT_VERIFIED);
+  });
+
+  it('refuses a proof minted for another link', async () => {
+    const e = env();
+    const s = await verifiedSession(e, 'rfp');
+    const elsewhere = await issueCommentProof('other-link', BUYER, 4_102_444_800, SECRET);
+    const res = await post('/t/comment', {
+      p_session_id: s.session_id,
+      p_token: s.token,
+      p_proof: elsewhere,
+      p_body: 'Hello?',
+    });
+    expect(await refusal(res)).toEqual(NOT_VERIFIED);
+  });
+
+  it('refuses an expired proof, and a tampered one', async () => {
     const e = env();
     const s = await verifiedSession(e);
+    // Bound to a cookie that ran out a minute ago.
+    const expired = await issueCommentProof(
+      'rfp',
+      BUYER,
+      Math.floor(Date.now() / 1000) - 60,
+      SECRET,
+    );
+    const good = await proofFromTheDeck('rfp', BUYER, e);
+    const [exp, mac] = good.split('.') as [string, string];
+    for (const p_proof of [expired, `${Number(exp) + 3600}.${mac}`, `${exp}.${'0'.repeat(64)}`]) {
+      const res = await post('/t/comment', {
+        p_session_id: s.session_id,
+        p_token: s.token,
+        p_proof,
+        p_body: 'Hello?',
+      });
+      expect(await refusal(res)).toEqual(NOT_VERIFIED);
+    }
+  });
+
+  // The oracle the old refusals were: a stored comment for an address that had
+  // verified, P0012 for one that had not. Without a proof every one of these
+  // must read the same, so posting learns nothing about who verified.
+  it('answers identically whether or not the claimed address ever verified', async () => {
+    const e = env();
+    const verified = await verifiedSession(e);
+    const walkIn = (await (
+      await post('/t/start_session', { p_share_slug: 'rfp', p_email: 'walkin@acme.test' }, {}, e)
+    ).json()) as { session_id: string; token: string };
+    const answers = [];
+    for (const s of [verified, walkIn, { session_id: 'no-such-session', token: 'x' }]) {
+      answers.push(
+        await refusal(
+          await post('/t/comment', { p_session_id: s.session_id, p_token: s.token, p_body: 'Hi' }),
+        ),
+      );
+    }
+    expect(answers).toEqual([NOT_VERIFIED, NOT_VERIFIED, NOT_VERIFIED]);
+  });
+
+  it('refuses a comment carrying the wrong token, proof or not', async () => {
+    const e = env();
+    const s = await verifiedSession(e);
+    const proof = await proofFromTheDeck('rfp', BUYER, e);
     const res = await post(
       '/t/comment',
-      { p_session_id: s.session_id, p_token: 'f'.repeat(64), p_body: 'Hello?' },
+      { p_session_id: s.session_id, p_token: 'f'.repeat(64), p_proof: proof, p_body: 'Hello?' },
       {},
       e,
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: 'P0010' });
+  });
+
+  it('puts no proof in a deck served without a verified cookie', async () => {
+    seedShare(db, { slug: 'plain', require_email: true });
+    objects[DOC.r2_key] = { body: '<html><head></head><body><h2>Pricing</h2></body></html>' };
+    const cookie = (await issueEmailCookie('plain', BUYER, SECRET)).split(';')[0]!;
+    const html = await (await call('/r/plain', { headers: { Cookie: cookie } })).text();
+    // Served and tracked — the reader got past the gate — just with no box.
+    expect(html).toContain('"email":"buyer@acme.test"');
+    expect(html).not.toContain('"comments"');
   });
 });
 

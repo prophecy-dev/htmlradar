@@ -173,9 +173,10 @@ async function boot(): Promise<void> {
   // mounted off `ready` and not at boot: before start_session returns there is
   // nothing to sign with, and a reader who bounced during the warm-up (ready
   // resolves null) is never offered a box at all. The proxy decides whether
-  // there is one — this flag arrives set only on a verified link read by a
-  // reader who proved their address.
-  if (config.comments.enabled) {
+  // there is one — the block arrives only on a verified link read by a reader
+  // who proved their address, carrying the proof the worker will ask for.
+  const proof = config.comments.proof;
+  if (config.comments.enabled && proof) {
     void ready
       .then((info) => {
         if (!info) return;
@@ -186,7 +187,7 @@ async function boot(): Promise<void> {
             const creds = session.credentials();
             if (!creds) return commentError(new RpcError('P0010', 'invalid_token'));
             try {
-              await transport.comment({ ...creds, ...draft });
+              await transport.comment({ ...creds, proof, ...draft });
               return null;
             } catch (err) {
               return commentError(err);

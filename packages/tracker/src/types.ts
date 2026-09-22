@@ -63,6 +63,8 @@ export interface TrackerConfig {
   // and the reader never sees it, or anyone else's, again.
   comments: {
     enabled: boolean;
+    /** Signed by the proxy from the reader's verified cookie; sent back with each comment. */
+    proof?: string;
   };
 
   privacy: {

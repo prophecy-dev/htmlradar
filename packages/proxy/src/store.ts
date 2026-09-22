@@ -87,6 +87,11 @@ export const updateSession = (
 export const addComment = (env: Env, input: db.AddCommentInput): Promise<db.AddCommentResult> =>
   guard(db.addComment(env.DB, input));
 
+export const commentSigner = (
+  env: Env,
+  sessionId: string,
+): Promise<{ slug: string; email: string } | null> => guard(db.commentSigner(env.DB, sessionId));
+
 export const recordNotification = (
   env: Env,
   ...args: Parameters<typeof db.recordNotification> extends [unknown, ...infer R] ? R : never

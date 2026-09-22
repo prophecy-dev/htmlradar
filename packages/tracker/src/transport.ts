@@ -36,6 +36,7 @@ export interface StartSessionResult {
 export interface CommentInput {
   sessionId: string;
   token: string;
+  proof: string;
   sectionId: string | null;
   sectionTitle: string | null;
   body: string;
@@ -117,6 +118,7 @@ export function createTransport(opts: RpcOptions) {
     await call('comment', {
       p_session_id: input.sessionId,
       p_token: input.token,
+      p_proof: input.proof,
       p_section_id: input.sectionId,
       p_section_title: input.sectionTitle,
       p_body: input.body,

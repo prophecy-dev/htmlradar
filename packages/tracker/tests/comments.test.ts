@@ -136,8 +136,9 @@ describe('when there is a box at all', () => {
     expect(resolveConfig(el)?.comments.enabled).toBe(false);
 
     // What the proxy injects on a verified link read by a verified reader.
-    window.HTMLRadarConfig = { comments: { enabled: true } };
-    expect(resolveConfig(el)?.comments.enabled).toBe(true);
+    // The proof rides along untouched: it is what /t/comment is checked against.
+    window.HTMLRadarConfig = { comments: { enabled: true, proof: '1790000000.ab12' } };
+    expect(resolveConfig(el)?.comments).toEqual({ enabled: true, proof: '1790000000.ab12' });
     delete window.HTMLRadarConfig;
   });
 

@@ -754,6 +754,33 @@ export interface AddCommentResult {
 }
 
 /**
+ * The link and the address a session is reading under, straight from the
+ * rows, so the worker can check a comment proof against them rather than
+ * against anything the request says (see verifyCommentProof in the proxy).
+ * Null for an unknown session; the caller refuses that exactly as it refuses a
+ * bad proof, so the answer says nothing about which sessions exist.
+ */
+export async function commentSigner(
+  db: DB,
+  sessionId: string,
+): Promise<{ slug: string; email: string } | null> {
+  const id = s(sessionId, 64);
+  if (!id) return null;
+  const r = await db
+    .prepare(
+      `SELECT sh.slug, v.email
+         FROM sessions se
+         JOIN document_shares sh ON sh.id = se.share_id
+         JOIN viewers v ON v.id = se.viewer_id
+        WHERE se.id = ?1`,
+    )
+    .bind(id)
+    .first<{ slug: string; email: string | null }>();
+  const email = (r?.email ?? '').trim().toLowerCase();
+  return r && email ? { slug: r.slug, email } : null;
+}
+
+/**
  * A verified reader's note to the sender. Authenticated exactly like
  * updateSession — the session id plus the token that session was handed — so a
  * comment is written by the browser that is doing the reading and by no other.
@@ -763,6 +790,11 @@ export interface AddCommentResult {
  * a code shows no comment box at all (the proxy decides that from the same two
  * facts), and this is the same rule on the writing side, where it cannot be
  * walked around by posting to the endpoint directly.
+ *
+ * It is the second line, not the first. A session's address is whatever its
+ * start_session body said, so a verification row for that address proves only
+ * that SOMEBODY verified it; the worker has already refused any comment that
+ * does not carry a proof signed from the reader's verified cookie.
  */
 export async function addComment(db: DB, input: AddCommentInput): Promise<AddCommentResult> {
   const sessionId = s(input.p_session_id, 64);
@@ -796,13 +828,6 @@ export async function addComment(db: DB, input: AddCommentInput): Promise<AddCom
   }
 
   const shareId = r['share_id'] as string;
-  // The second ceiling, per link, and after the token check so that nobody can
-  // spend a stranger's budget: a hundred comments an hour on one link is a
-  // script, whichever session each one claims to come from.
-  if (!(await hitRateLimit(db, `comment-share:${shareId}`, 100, 3600))) {
-    throw new RpcFailure('P0001', 'rate_limited');
-  }
-
   const expires = r['expires_at'] as string | null;
   if (r['revoked_at']) throw new RpcFailure('P0003', 'share_revoked');
   if (expires && Date.parse(expires) < Date.now()) throw new RpcFailure('P0004', 'share_expired');
@@ -833,6 +858,15 @@ export async function addComment(db: DB, input: AddCommentInput): Promise<AddCom
     .slice(0, MAX_COMMENT_CHARS)
     .trim();
   if (!body) throw new RpcFailure('P0013', 'comment_empty');
+
+  // The second ceiling, per link: a hundred comments an hour on one link is a
+  // script, whichever session each one claims to come from. Counted only here,
+  // once every other check has passed, so that nothing refused spends it — a
+  // reader on a plain link, or a revoked one, posting over and over must not
+  // be able to silence the verified readers of the link (review, medium).
+  if (!(await hitRateLimit(db, `comment-share:${shareId}`, 100, 3600))) {
+    throw new RpcFailure('P0001', 'rate_limited');
+  }
 
   const commentId = uuid();
   const sectionTitle = s(input.p_section_title, 512);

@@ -8,6 +8,7 @@ import {
   RpcFailure,
   addComment,
   checkEmailVerificationCode,
+  commentSigner,
   issueEmailVerificationCode,
   startSession,
   type AddCommentInput,
@@ -172,6 +173,55 @@ describe('addComment', () => {
     for (let i = 0; i < 5; i++) await comment(args);
     expect(await code(comment(args))).toBe('P0001');
     expect(db.rows(`SELECT count(*) AS n FROM document_comments`)).toEqual([{ n: 5 }]);
+  });
+
+  // The per-link ceiling is spent only by comments that are stored. If refused
+  // posts counted, anybody on the link — unverified, or posting nothing — could
+  // use up the hour's budget and silence the readers who did verify.
+  it('does not let refused posts spend the link’s budget', async () => {
+    const s = await verifiedReading('v');
+    const shareBudget = () =>
+      db.rows(`SELECT count FROM rate_limits WHERE key = ?`, `comment-share:${s.share_id}`);
+
+    const walkIn = await startSession(db, {
+      p_share_slug: 'v',
+      p_email: 'walkin@acme.com',
+      p_fingerprint: null,
+      p_referrer: null,
+      p_user_agent: null,
+    });
+    for (let i = 0; i < 5; i++) {
+      expect(await code(comment({ p_session_id: walkIn.session_id, p_token: walkIn.token }))).toBe(
+        'P0012',
+      );
+    }
+    expect(await code(comment({ p_session_id: s.session_id, p_token: s.token, p_body: ' ' }))).toBe(
+      'P0013',
+    );
+    expect(shareBudget()).toEqual([]);
+
+    await comment({ p_session_id: s.session_id, p_token: s.token });
+    expect(shareBudget()).toEqual([{ count: 1 }]);
+  });
+
+  it('still stops a link at a hundred stored comments an hour', async () => {
+    const s = await verifiedReading('v');
+    db.rows(
+      `INSERT INTO rate_limits (key, window_at, count) VALUES (?, ?, 100)`,
+      `comment-share:${s.share_id}`,
+      new Date().toISOString(),
+    );
+    expect(await code(comment({ p_session_id: s.session_id, p_token: s.token }))).toBe('P0001');
+    expect(db.rows(`SELECT count(*) AS n FROM document_comments`)).toEqual([{ n: 0 }]);
+  });
+});
+
+describe('commentSigner', () => {
+  it('reads the link and address off the session rows, lower-cased', async () => {
+    const s = await verifiedReading('v');
+    expect(await commentSigner(db, s.session_id)).toEqual({ slug: 'v', email: 'reader@acme.com' });
+    expect(await commentSigner(db, 'no-such-session')).toBeNull();
+    expect(await commentSigner(db, '')).toBeNull();
   });
 });
 

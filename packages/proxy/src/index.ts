@@ -43,6 +43,7 @@ import {
   startSession,
   updateSession,
   addComment,
+  commentSigner,
   RpcFailure,
   UpstreamError,
   type Attachment,
@@ -72,6 +73,8 @@ import {
   issueGateToken,
   verifyGateToken,
   issueVerifiedCookie,
+  issueCommentProof,
+  verifyCommentProof,
   newVerificationCode,
   newVerifyChallenge,
   readVerifyChallenge,
@@ -335,6 +338,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // One branch, so the attachment route (which repeats this pair) and the
   // document cannot disagree.
   let verifiedEmail: string | undefined;
+  // When the address came from the VERIFIED cookie (not the plain e-mail one),
+  // that cookie's expiry — the comment proof below must not outlive it.
+  let verifiedCookieExpiresAt: number | undefined;
   if (share.require_email && !isOwnerPreview) {
     const cookie = share.verify_email
       ? await verifyVerifiedCookie(request.headers.get('cookie'), slug, env.SESSION_SECRET)
@@ -357,6 +363,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       );
     }
     verifiedEmail = cookie.email;
+    if (share.verify_email) verifiedCookieExpiresAt = cookie.expiresAt;
   }
 
   const doc = await getDocument(env, share.document_id);
@@ -386,7 +393,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // Tracking off means no session, and a comment is written against a session,
   // so an opted-out reader has no box either. That is the honest order: a
   // reader who asked not to be recorded is not offered a way to be recorded.
-  const commentsEnabled = trackingEnabled && share.verify_email && !!verifiedEmail;
+  //
+  // What turns the box on is a proof signed here, from the verified cookie
+  // this request carried — not a flag. /t/comment accepts nothing else, since
+  // the address on a session is only what its start_session body claimed.
+  const commentProof =
+    trackingEnabled && share.verify_email && verifiedEmail && verifiedCookieExpiresAt
+      ? await issueCommentProof(slug, verifiedEmail, verifiedCookieExpiresAt, env.SESSION_SECRET)
+      : undefined;
 
   // The returning reader: `hr_rid` carries a random value on this host; the
   // tracker is handed that value bound to this document (deriveReaderId), so
@@ -408,7 +422,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     trackerUrl: trackerSrc(env),
     endpoint: url.origin,
     og: card,
-    ...(commentsEnabled ? { comments: true } : {}),
+    ...(commentProof ? { commentProof } : {}),
     ...(verifiedEmail ? { email: verifiedEmail } : {}),
     ...(readerId ? { readerId } : {}),
     ...(setCookies.length > 0 ? { setCookies } : {}),
@@ -482,8 +496,20 @@ async function handleTrackerCall(
       return tJson(result);
     }
     if (call === 'comment') {
+      // The proof first, against the link and address the SESSION holds. One
+      // refusal for every way of failing — no proof, a forged or expired one,
+      // one for another link or address, a session that does not exist — so
+      // the answer cannot be used to learn who has verified on a link.
+      const sessionId = str('p_session_id') ?? '';
+      const signer = await commentSigner(env, sessionId);
+      if (
+        !signer ||
+        !(await verifyCommentProof(str('p_proof'), signer.slug, signer.email, env.SESSION_SECRET))
+      ) {
+        throw new RpcFailure('P0012', 'not_verified');
+      }
       const comment = await addComment(env, {
-        p_session_id: str('p_session_id') ?? '',
+        p_session_id: sessionId,
         p_token: str('p_token') ?? '',
         p_section_id: str('p_section_id'),
         p_section_title: str('p_section_title'),

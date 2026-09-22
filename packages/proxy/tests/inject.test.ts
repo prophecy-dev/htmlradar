@@ -423,10 +423,10 @@ describe('the comment box switch', () => {
         share: makeShare({ require_email: true, verify_email: true }),
         ...BASE,
         email: 'buyer@acme.test',
-        comments: true,
+        commentProof: '1790000000.abc123',
       })
     ).text();
-    expect(withBox).toContain('"comments":{"enabled":true}');
+    expect(withBox).toContain('"comments":{"enabled":true,"proof":"1790000000.abc123"}');
 
     // The same verified reader on a load where the proxy did not turn it on
     // (opted out, owner preview) gets a document with nothing to comment in.
